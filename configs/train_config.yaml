@@ -1,18 +1,18 @@
 # environment settings
 seed: 0
-precision: bf16
+precision: 16 #bf16
 strategy: ddp
 
 # data arguments
 dataset: taskonomy
 task_fold: 0
 num_workers: 4
-global_batch_size: 8
-max_channels: 5
+global_batch_size: 1
+max_channels: 1
 shot: 4
 n_buildings: -1
 domains_per_batch: 2
-eval_batch_size: 8
+eval_batch_size: 1
 n_eval_batches: 10
 img_size: 224
 image_augmentation: True
@@ -26,6 +26,8 @@ model: VTM
 image_backbone: beit_base_patch16_224_in22k
 label_backbone: vit_base_patch16_224
 image_encoder_weights: imagenet
+time_attention: True # 'False' for only space attention (VTM base model) 
+n_frames: 4 # number of frames attended in time attention
 drop_rate: 0.
 drop_path_rate: 0.1
 attn_drop_rate: 0.

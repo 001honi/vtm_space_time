@@ -11,7 +11,7 @@ from timm.models.layers import PatchEmbed, DropPath, trunc_normal_
 from .beit_registry import register_model
 from timm.models.vision_transformer import checkpoint_filter_fn
 
-from einops import repeat
+from einops import repeat, rearrange
 
 
 def _cfg(url='', **kwargs):
@@ -91,7 +91,10 @@ class CustomLinear(nn.Linear):
         if self.n_tasks > 0:
             assert t_idx is not None
             output = F.linear(input, self.weight, None)
-            return output + self.bias[t_idx][:, None]
+            if input.shape[0] == t_idx.shape[0]: # default
+                return output + self.bias[t_idx][:, None]
+            else: # add bias for temporal arrangement 
+                return output + self.bias[t_idx][None, :]
         else:
             return F.linear(input, self.weight, self.bias)
 
@@ -109,7 +112,10 @@ class CustomLayerNorm(nn.LayerNorm):
         if self.n_tasks > 0:
             assert t_idx is not None
             output = F.layer_norm(input, self.normalized_shape, self.weight, None, self.eps)
-            return output + self.bias[t_idx][:, None]
+            if input.shape[0] == t_idx.shape[0]: # default
+                return output + self.bias[t_idx][:, None]
+            else: # add bias for temporal arrangement 
+                return output + self.bias[t_idx][None, :]
         else:
             return F.layer_norm(
                 input, self.normalized_shape, self.weight, self.bias, self.eps)
@@ -219,12 +225,23 @@ class CustomAttention(nn.Module):
 class CustomBlock(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
                  drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=CustomLayerNorm,
-                 window_size=None, attn_head_dim=None, n_prompts=0, n_tasks=0):
+                 window_size=None, attn_head_dim=None, n_prompts=0, n_tasks=0, n_frames=8, time_attention=True):
         super().__init__()
+
+        self.time_attention = time_attention
         self.norm1 = norm_layer(n_tasks, dim)
         self.attn = CustomAttention(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
             window_size=window_size, attn_head_dim=attn_head_dim, n_prompts=n_prompts, n_tasks=n_tasks)
+        # Initialize time-layers for time-attention
+        # Note: layer_name + ‘0’ or ‘_t’ indicates time layers
+        if time_attention:
+            self.norm0 = norm_layer(n_tasks, dim)
+            self.attn_t = CustomAttention(
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
+            window_size=(n_frames-1,1), attn_head_dim=attn_head_dim, n_prompts=n_prompts, n_tasks=n_tasks)
+            self.temp_fc = CustomLinear(n_tasks, dim, dim)
+
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(n_tasks, dim)
@@ -232,16 +249,31 @@ class CustomBlock(nn.Module):
         self.mlp = CustomMlp(n_tasks=n_tasks, in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
         if init_values:
+            self.gamma_0 = nn.Parameter(init_values * torch.ones((dim)), requires_grad=True) if time_attention else None
             self.gamma_1 = nn.Parameter(init_values * torch.ones((dim)), requires_grad=True)
             self.gamma_2 = nn.Parameter(init_values * torch.ones((dim)), requires_grad=True)
         else:
-            self.gamma_1, self.gamma_2 = None, None
+            self.gamma_0, self.gamma_1, self.gamma_2 = None, None, None
 
     def forward(self, x, rel_pos_bias: Optional[torch.Tensor] = None, t_idx=None):
         if self.gamma_1 is None:
+            if self.time_attention:
+                x = x + self.temp_fc(self.drop_path(self.attn_t(self.norm0(x, t_idx), rel_pos_bias=rel_pos_bias, t_idx=t_idx)))
             x = x + self.drop_path(self.attn(self.norm1(x, t_idx), rel_pos_bias=rel_pos_bias, t_idx=t_idx))
             x = x + self.drop_path(self.mlp(self.norm2(x, t_idx), t_idx))
         else:
+            if self.time_attention:
+                # Separate CLS token
+                cls_token = x[:, 0, :].unsqueeze(1)
+                x = x[:, 1:]
+                # Change the spatial and temporal dimensions (P for patch; F for frames; D for embed_dim) 
+                x = rearrange(x, 'F P D -> P F D')
+                x = self.drop_path(self.gamma_0 * self.attn_t(self.norm0(x, t_idx), rel_pos_bias=rel_pos_bias, t_idx=t_idx))
+                x = x + self.temp_fc(x, t_idx=t_idx)
+                # Change back the arrangement
+                x = rearrange(x, 'P F D -> F P D')
+                x = torch.cat((cls_token, x), dim=1)
+
             x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1(x, t_idx), rel_pos_bias=rel_pos_bias, t_idx=t_idx))
             x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x, t_idx), t_idx))
         return x
@@ -291,8 +323,9 @@ class CustomBeit(nn.Module):
                  num_heads=12, mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0., norm_layer=partial(CustomLayerNorm, eps=1e-6), init_values=None,
                  use_abs_pos_emb=True, use_rel_pos_bias=False, use_shared_rel_pos_bias=False,
-                 use_mean_pooling=True, init_scale=0.001, n_prompts=0, n_tasks=0):
+                 use_mean_pooling=True, init_scale=0.001, n_prompts=0, n_tasks=0, n_frames=8, time_attention=True):
         super().__init__()
+
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
 
@@ -300,7 +333,7 @@ class CustomBeit(nn.Module):
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
         num_patches = self.patch_embed.num_patches
 
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) # actually we do not use it
         # self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         if use_abs_pos_emb:
             self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
@@ -313,6 +346,10 @@ class CustomBeit(nn.Module):
         else:
             self.rel_pos_bias = None
 
+        if time_attention:
+            self.time_embed = nn.Parameter(torch.zeros(1, n_frames, embed_dim))
+            self.time_drop = nn.Dropout(p=drop_rate)
+
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.use_rel_pos_bias = use_rel_pos_bias
         self.blocks = nn.ModuleList([
@@ -320,7 +357,7 @@ class CustomBeit(nn.Module):
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
                 init_values=init_values, window_size=self.patch_embed.grid_size if use_rel_pos_bias else None,
-                n_prompts=n_prompts, n_tasks=n_tasks,
+                n_prompts=n_prompts, n_tasks=n_tasks, n_frames=n_frames, time_attention=time_attention
             )
             for i in range(depth)])
 
@@ -330,6 +367,17 @@ class CustomBeit(nn.Module):
         trunc_normal_(self.cls_token, std=.02)
         # trunc_normal_(self.mask_token, std=.02)
         self.fix_init_weight()
+
+        # initialization of temporal attention weights (TimeSformer'21)
+        if time_attention:
+            i = 0
+            for m in self.blocks.modules():
+                m_str = str(m)
+                if 'Block' in m_str:
+                    if i > 0:
+                      nn.init.constant_(m.temp_fc.weight, 0)
+                      nn.init.constant_(m.temp_fc.bias, 0)
+                    i += 1
 
     def fix_init_weight(self):
         def rescale(param, layer_id):
@@ -360,7 +408,6 @@ def _create_beit(variant, pretrained=False, default_cfg=None, **kwargs):
     default_cfg = default_cfg or default_cfgs[variant]
     if kwargs.get('features_only', None):
         raise RuntimeError('features_only not implemented for Beit models.')
-
     model = build_model_with_cfg(
         CustomBeit, variant, pretrained,
         default_cfg=default_cfg,

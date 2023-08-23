@@ -1,4 +1,5 @@
 import os
+os.environ["CUDA_VISIBLE_DEVICES"]="3"
 import pytorch_lightning as pl
 import torch
 import warnings

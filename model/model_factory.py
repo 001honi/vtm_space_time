@@ -37,6 +37,8 @@ def create_image_backbone(config, verbose=True, load_pretrained=True):
     
     backbone = BEiTEncoder(
         config.image_backbone,
+        time_attention=config.time_attention,
+        n_frames=config.n_frames,
         drop_rate=config.drop_rate,
         drop_path_rate=config.drop_path_rate,
         attn_drop_rate=config.attn_drop_rate,

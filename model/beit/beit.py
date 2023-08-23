@@ -8,12 +8,15 @@ from .beit_factory import create_model as create_custom_model
 
 
 class BEiTEncoder(nn.Module):
-    def __init__(self, model_name='beit_base_patch16_224_in22k',
+    def __init__(self, model_name='beit_base_patch16_224_in22k', 
+                 time_attention=True, n_frames=8,
                  drop_rate=0.0, drop_path_rate=0.1, attn_drop_rate=0.0,
                  n_tasks=0, bitfit=True, n_levels=1):
         super().__init__()
         self.beit = create_custom_model(
             model_name,
+            time_attention=time_attention,
+            n_frames=n_frames,
             pretrained=False,
             num_classes=0,
             drop_rate=drop_rate,
@@ -24,6 +27,7 @@ class BEiTEncoder(nn.Module):
         )
         
         self.model_name = model_name
+        self.time_attention = time_attention
         self.img_size = self.beit.patch_embed.img_size
         self.grid_size = self.beit.patch_embed.grid_size
         self.patch_size = self.beit.patch_embed.patch_size
@@ -48,15 +52,29 @@ class BEiTEncoder(nn.Module):
         # project image patches to tokens
         x = self.beit.patch_embed(x)
         
-        # add CLS token
+        # add CLS token 
         x = torch.cat((self.beit.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
         
         # positional embedding
         if self.beit.pos_embed is not None:
             x = x + self.beit.pos_embed
         x = self.beit.pos_drop(x)
-        
-        return x
+
+        # time embedding
+        # TODO add resize feature in case dimension dismatch in inference 
+        if self.time_attention:
+            # Separate CLS token
+            cls_token = x[:, 0, :].unsqueeze(1)
+            x = x[:, 1:]
+            # Change the spatial and temporal dimensions (P for patch; F for frames; D for embed_dim) 
+            x = rearrange(x, 'F P D -> P F D')
+            x = x + self.beit.time_embed
+            x = self.beit.time_drop(x)
+            # Change back the arrangement
+            x = rearrange(x, 'P F D -> F P D')
+            x = torch.cat((cls_token, x), dim=1)
+
+        return x # x: [(B T N), (H W)+1, D]
         
     def forward(self, x, t_idx=None, get_features=False):
         x = self.tokenize(x)
