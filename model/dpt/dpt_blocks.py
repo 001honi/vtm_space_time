@@ -16,6 +16,8 @@ def _make_encoder(
     expand=False,
     model=None,
     in_chans=3,
+    time_attention=True,
+    n_frames=8
 ):
     if backbone == "vitl16_384":
         pretrained = _make_pretrained_vitl16_384(
@@ -37,6 +39,8 @@ def _make_encoder(
         pretrained = _make_pretrained_vitb16_224(
             use_pretrained,
             in_chans=in_chans,
+            time_attention=time_attention,
+            n_frames=n_frames
         )
         scratch = _make_scratch(
             [96, 192, 384, 768], features, groups=groups, expand=expand

@@ -1,4 +1,4 @@
-from .beit_registry import is_model, model_entrypoint
+from .timm_registry import is_model, model_entrypoint
 from timm.models.helpers import load_checkpoint
 from timm.models.layers import set_layer_config
 from timm.models.hub import load_model_config_from_hf

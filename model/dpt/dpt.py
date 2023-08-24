@@ -2,6 +2,7 @@ import torch.nn as nn
 from einops import rearrange
 from .dpt_blocks import _make_fusion_block, Interpolate, _make_encoder
 
+import torch
 
 backbone_dict = {
     'vit_base_patch16_224': 'vitb16_224',
@@ -17,7 +18,9 @@ class DPT(nn.Module):
             use_bn=False,
             pretrained=True,
             in_chans=1,
-            out_chans=1
+            out_chans=1,
+            time_attention=True,
+            n_frames=8
         ):
         super().__init__()
         # Instantiate backbone and reassemble blocks
@@ -28,6 +31,8 @@ class DPT(nn.Module):
             groups=1,
             expand=False,
             in_chans=in_chans,
+            time_attention=time_attention,
+            n_frames=n_frames
         )
 
         self.scratch.refinenet1 = _make_fusion_block(features, use_bn)
@@ -56,13 +61,13 @@ class DPT(nn.Module):
         return self.scratch.parameters()
     
     def encode(self, x, t_idx=None):
-        glob = self.pretrained.model.forward_flex(x, t_idx=t_idx)
+        glob = self.pretrained.model.forward_features(x, t_idx=t_idx)
 
         layer_1 = rearrange(self.pretrained.activations["1"][:, 1:], 'B (H W) C -> B C H W', H=self.patch_size[0])
         layer_2 = rearrange(self.pretrained.activations["2"][:, 1:], 'B (H W) C -> B C H W', H=self.patch_size[0])
         layer_3 = rearrange(self.pretrained.activations["3"][:, 1:], 'B (H W) C -> B C H W', H=self.patch_size[0])
         layer_4 = rearrange(self.pretrained.activations["4"][:, 1:], 'B (H W) C -> B C H W', H=self.patch_size[0])
-        
+      
         return layer_1, layer_2, layer_3, layer_4
     
     def decode(self, features, t_idx=None):

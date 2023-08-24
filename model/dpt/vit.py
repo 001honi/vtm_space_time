@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
-import timm
+# import timm
 import types
 import math
 import torch.nn.functional as F
 
+from ..timm_factory import create_model as create_custom_model
 
 activations = {}
 
@@ -179,9 +180,9 @@ def _make_vit_backbone(
     return pretrained
 
 
-def _make_pretrained_vitl16_384(pretrained, in_chans=3):
-    model = timm.create_model("vit_large_patch16_384", pretrained=pretrained, in_chans=in_chans)
-
+def _make_pretrained_vitl16_384(pretrained, in_chans=3, **kwargs):
+    # model = timm.create_model("vit_large_patch16_384", pretrained=pretrained, in_chans=in_chans, **kwargs)
+    model = create_custom_model("vit_large_patch16_384", pretrained=pretrained, in_chans=in_chans, **kwargs)
     hooks = [5, 11, 17, 23]
     return _make_vit_backbone(
         model,
@@ -191,9 +192,9 @@ def _make_pretrained_vitl16_384(pretrained, in_chans=3):
     )
 
 
-def _make_pretrained_vitb16_384(pretrained, in_chans=3):
-    model = timm.create_model("vit_base_patch16_384", pretrained=pretrained, in_chans=in_chans)
-
+def _make_pretrained_vitb16_384(pretrained, in_chans=3, **kwargs):
+    # model = timm.create_model("vit_base_patch16_384", pretrained=pretrained, in_chans=in_chans, **kwargs)
+    model = create_custom_model("vit_base_patch16_384", pretrained=pretrained, in_chans=in_chans, **kwargs)
     hooks = [2, 5, 8, 11]
     return _make_vit_backbone(
         model,
@@ -202,9 +203,9 @@ def _make_pretrained_vitb16_384(pretrained, in_chans=3):
     )
 
 
-def _make_pretrained_vitb16_224(pretrained, in_chans=3):
-    model = timm.create_model("vit_base_patch16_224", pretrained=pretrained, in_chans=in_chans)
-
+def _make_pretrained_vitb16_224(pretrained, in_chans=3, **kwargs):
+    # model = timm.create_model("vit_base_patch16_224", pretrained=pretrained, in_chans=in_chans)
+    model = create_custom_model("vit_base_patch16_224", pretrained=pretrained, in_chans=in_chans, **kwargs)
     hooks = [2, 5, 8, 11]
     return _make_vit_backbone(
         model,

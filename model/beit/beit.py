@@ -4,7 +4,7 @@ from einops import rearrange
 import numpy as np
 from scipy import interpolate
 
-from .beit_factory import create_model as create_custom_model
+from ..timm_factory import create_model as create_custom_model
 
 
 class BEiTEncoder(nn.Module):
@@ -15,8 +15,6 @@ class BEiTEncoder(nn.Module):
         super().__init__()
         self.beit = create_custom_model(
             model_name,
-            time_attention=time_attention,
-            n_frames=n_frames,
             pretrained=False,
             num_classes=0,
             drop_rate=drop_rate,
@@ -24,6 +22,8 @@ class BEiTEncoder(nn.Module):
             attn_drop_rate=attn_drop_rate,
             init_scale=0.001,
             n_tasks=(n_tasks if bitfit else 0),
+            time_attention=time_attention,
+            n_frames=n_frames
         )
         
         self.model_name = model_name

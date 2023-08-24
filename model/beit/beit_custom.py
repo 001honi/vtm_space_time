@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from timm.models.helpers import build_model_with_cfg
 from timm.models.layers import PatchEmbed, DropPath, trunc_normal_
-from .beit_registry import register_model
+from ..timm_registry import register_model
 from timm.models.vision_transformer import checkpoint_filter_fn
 
 from einops import repeat, rearrange
@@ -225,7 +225,7 @@ class CustomAttention(nn.Module):
 class CustomBlock(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
                  drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=CustomLayerNorm,
-                 window_size=None, attn_head_dim=None, n_prompts=0, n_tasks=0, n_frames=8, time_attention=True):
+                 window_size=None, attn_head_dim=None, n_prompts=0, n_tasks=0, time_attention=True, n_frames=8):
         super().__init__()
 
         self.time_attention = time_attention
@@ -258,7 +258,17 @@ class CustomBlock(nn.Module):
     def forward(self, x, rel_pos_bias: Optional[torch.Tensor] = None, t_idx=None):
         if self.gamma_1 is None:
             if self.time_attention:
-                x = x + self.temp_fc(self.drop_path(self.attn_t(self.norm0(x, t_idx), rel_pos_bias=rel_pos_bias, t_idx=t_idx)))
+                # Separate CLS token
+                cls_token = x[:, 0, :].unsqueeze(1)
+                x = x[:, 1:]
+                # Change the spatial and temporal dimensions (P for patch; F for frames; D for embed_dim) 
+                x = rearrange(x, 'F P D -> P F D')
+                x = self.drop_path(self.attn_t(self.norm0(x, t_idx), rel_pos_bias=rel_pos_bias, t_idx=t_idx))
+                x = x + self.temp_fc(x, t_idx=t_idx)
+                # Change back the arrangement
+                x = rearrange(x, 'P F D -> F P D')
+                x = torch.cat((cls_token, x), dim=1)
+
             x = x + self.drop_path(self.attn(self.norm1(x, t_idx), rel_pos_bias=rel_pos_bias, t_idx=t_idx))
             x = x + self.drop_path(self.mlp(self.norm2(x, t_idx), t_idx))
         else:
@@ -323,7 +333,7 @@ class CustomBeit(nn.Module):
                  num_heads=12, mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0., norm_layer=partial(CustomLayerNorm, eps=1e-6), init_values=None,
                  use_abs_pos_emb=True, use_rel_pos_bias=False, use_shared_rel_pos_bias=False,
-                 use_mean_pooling=True, init_scale=0.001, n_prompts=0, n_tasks=0, n_frames=8, time_attention=True):
+                 use_mean_pooling=True, init_scale=0.001, n_prompts=0, n_tasks=0, time_attention=True, n_frames=8):
         super().__init__()
 
         self.num_classes = num_classes
@@ -357,7 +367,7 @@ class CustomBeit(nn.Module):
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
                 init_values=init_values, window_size=self.patch_embed.grid_size if use_rel_pos_bias else None,
-                n_prompts=n_prompts, n_tasks=n_tasks, n_frames=n_frames, time_attention=time_attention
+                n_prompts=n_prompts, n_tasks=n_tasks, time_attention=time_attention, n_frames=n_frames 
             )
             for i in range(depth)])
 

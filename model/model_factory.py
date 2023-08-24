@@ -37,14 +37,14 @@ def create_image_backbone(config, verbose=True, load_pretrained=True):
     
     backbone = BEiTEncoder(
         config.image_backbone,
-        time_attention=config.time_attention,
-        n_frames=config.n_frames,
         drop_rate=config.drop_rate,
         drop_path_rate=config.drop_path_rate,
         attn_drop_rate=config.attn_drop_rate,
         n_tasks=n_tasks,
         n_levels=config.n_levels,
         bitfit=config.bitfit,
+        time_attention=config.time_attention,
+        n_frames=config.n_frames,
     )
     backbone.dim_hidden = backbone.embed_dim
 
@@ -63,7 +63,11 @@ def create_image_backbone(config, verbose=True, load_pretrained=True):
 
 
 def create_label_backbone(config):
-    backbone = DPT(config.label_backbone)
+    backbone = DPT(
+        model_name=config.label_backbone,
+        time_attention=config.time_attention,
+        n_frames=config.n_frames
+    )
     backbone.dim_hidden = backbone.embed_dim
         
     return backbone
