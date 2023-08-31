@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from timm.models.helpers import build_model_with_cfg
 from timm.models.layers import PatchEmbed, DropPath, trunc_normal_
-from ..timm_registry import register_model
+from ..registry import register_model
 from timm.models.vision_transformer import checkpoint_filter_fn
 
 from einops import repeat, rearrange
@@ -195,7 +195,7 @@ class CustomAttention(nn.Module):
                     self.window_size[0] * self.window_size[1] + 1, -1)  # Wh*Ww,Wh*Ww,nH
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             
-            _C, _H, _W = relative_position_bias.shape
+            _C, _H, _W = relative_position_bias.shape          
             
             if self.n_prompts > 0:
                 relative_position_bias = torch.cat((
@@ -207,8 +207,10 @@ class CustomAttention(nn.Module):
                     torch.zeros(_C, _H + self.n_prompts, self.n_prompts, dtype=attn.dtype, device=attn.device),
                     relative_position_bias
                     ), dim=-1)
-            
-            attn = attn + relative_position_bias.unsqueeze(0)
+
+            # if there is a dimension mismatch in the inference skip rel-pos-bias    
+            if x.shape[1] == _H:
+                attn = attn + relative_position_bias.unsqueeze(0)
 
         if rel_pos_bias is not None:
             attn = attn + rel_pos_bias

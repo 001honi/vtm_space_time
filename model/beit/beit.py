@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from einops import rearrange
 import numpy as np
 from scipy import interpolate
 
-from ..timm_factory import create_model as create_custom_model
+from ..factory import create_model as create_custom_model
 
 
 class BEiTEncoder(nn.Module):
@@ -55,20 +56,24 @@ class BEiTEncoder(nn.Module):
         # add CLS token 
         x = torch.cat((self.beit.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
         
-        # positional embedding
+        # positional embedding (actually, we use relative-position in attention)
         if self.beit.pos_embed is not None:
             x = x + self.beit.pos_embed
         x = self.beit.pos_drop(x)
 
         # time embedding
-        # TODO add resize feature in case dimension dismatch in inference 
         if self.time_attention:
             # Separate CLS token
             cls_token = x[:, 0, :].unsqueeze(1)
             x = x[:, 1:]
             # Change the spatial and temporal dimensions (P for patch; F for frames; D for embed_dim) 
             x = rearrange(x, 'F P D -> P F D')
-            x = x + self.beit.time_embed
+            # Interpolation, in case embedding size mismatch in the inference
+            if x.shape[1] != self.beit.time_embed.shape[1]:
+                x = x + F.interpolate(self.beit.time_embed.transpose(1,2),
+                    size=(x.shape[1]), mode='nearest').transpose(1, 2)
+            else:
+                x = x + self.beit.time_embed
             x = self.beit.time_drop(x)
             # Change back the arrangement
             x = rearrange(x, 'P F D -> F P D')

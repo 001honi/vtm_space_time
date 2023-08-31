@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, IMAGENET_INCEPTION_MEAN, IMAGENET_INCEPTION_STD
 from timm.models.helpers import build_model_with_cfg, named_apply, adapt_input_conv
 from timm.models.layers import PatchEmbed, Mlp, DropPath, trunc_normal_, lecun_normal_
-from ..timm_registry import register_model
+from ..registry import register_model
 
 from einops import rearrange
 
@@ -386,7 +386,6 @@ class CustomVisionTransformer(nn.Module):
             x = self.patch_embed.proj(x)
         x = x.flatten(2).transpose(1, 2)
 
-        # x = self.patch_embed(x)
         cls_token = self.cls_token.expand(x.shape[0], -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
         if self.dist_token is None:
             x = torch.cat((cls_token, x), dim=1)
@@ -397,10 +396,6 @@ class CustomVisionTransformer(nn.Module):
         x = self.norm(x)
 
         return x
-        # if self.dist_token is None:
-        #     return self.pre_logits(x[:, 0])
-        # else:
-        #     return x[:, 0], x[:, 1]
 
     def forward(self, x):
         x = self.forward_features(x)
