@@ -134,7 +134,8 @@ class RandomJitter(Augmentation):
         beta = brightness
         
         label = alpha * label + beta
-        label = torch.clip(label, 0, 1)
+        # label = torch.clip(label, 0, 1) PyTorch: "clamp_scalar_cpu" not implemented for 'Half'
+        label = np.clip(label, 0, 1)
         label = normalize(label)
         
         return label, mask
@@ -212,13 +213,16 @@ class BinaryAugmentation(Augmentation):
 
 
 class Mixup(BinaryAugmentation):
-    def __init__(self, alpha=1.0):
+    def __init__(self, alpha=1.0, order=False):
         self.alpha = alpha
+        self.order = order
         
     def __call__(self, label_1, label_2, mask_1, mask_2):
         lam = np.random.beta(self.alpha, self.alpha)
+        if self.order:
+            lam = max(lam, 1 - lam)
         label_mix = lam*label_1 + (1 - lam)*label_2
-        mask_mix = torch.logical_and(mask_1, mask_2)
+        mask_mix = torch.logical_and(mask_1, mask_2, out=mask_1.new(mask_1.size()))
         
         return label_mix, mask_mix
 
@@ -239,8 +243,8 @@ class Cutmix(BinaryAugmentation):
         mask_mix[:, :, bbx1:bbx2, bby1:bby2] = mask_2[:, :, bbx1:bbx2, bby1:bby2]
 
         return label_mix, mask_mix
+    
      
-
 FILTERING_AUGMENTATIONS = {
     'jitter': (RandomJitter, {"brightness": (-0.5, 0.5), 
                               "contrast": (-0.5, 0.5)}),
@@ -248,4 +252,12 @@ FILTERING_AUGMENTATIONS = {
     'sigmoid': (RandomSigmoidTransform, {"temperature": [0.1, 0.2, 0.5, 2e5, 5e5, 1e6, 2e6]}),
     'gaussianblur': (RandomGaussianBlur, {"kernel_size": [9, 17, 33], 
                                           "sigma": [0.5, 1.0, 2.0, 5.0, 10.0]}),
-}
+    }
+
+
+def get_filtering_augmentation():
+    filtering_augmentation = RandomCompose(
+        [augmentation(**kwargs) for augmentation, kwargs in FILTERING_AUGMENTATIONS.values()],
+        p=0.8,
+    )
+    return filtering_augmentation
