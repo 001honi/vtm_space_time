@@ -1,5 +1,6 @@
 import pytorch_lightning as pl
 import torch
+from torch.utils.data import DataLoader
 import torchvision.transforms as T
 from einops import rearrange, repeat, reduce
 import os
@@ -43,6 +44,10 @@ class LightningTrainWrapper(pl.LightningModule):
         # save hyper=parameters
         self.save_hyperparameters()
 
+        # load train data to prevent redundant loading
+        if config.stage == 0:
+            self.train_data = get_train_loader(self.config, verbose=(self.verbose and verbose))
+
     def load_support_data(self, data_path='support_data.pth'):
         '''
         Load support data for validation.
@@ -76,7 +81,14 @@ class LightningTrainWrapper(pl.LightningModule):
         '''
         Prepare training loader.
         '''
-        return get_train_loader(self.config, verbose=(self.verbose and verbose))
+        if self.config.stage == 0:
+            train_loader = DataLoader(self.train_data, batch_size=(self.config.global_batch_size // torch.cuda.device_count()),
+                                        shuffle=False, pin_memory=True, persistent_workers=(self.config.num_workers > 0),
+                                        drop_last=True, num_workers=self.config.num_workers)
+        else:
+            train_loader = get_train_loader(self.config, verbose=(self.verbose and verbose))
+            
+        return train_loader
     
     def val_dataloader(self, verbose=True):
         '''

@@ -3,11 +3,17 @@ import torch.nn.functional as F
 from einops import rearrange
 import math
 
-from dataset.taskonomy_constants import TASKS, TASKS_SEMSEG, SEMSEG_CLASSES
 from .miou_fss import Evaluator
 
-
+from dataset.taskonomy_constants import TASKS, TASKS_SEMSEG, SEMSEG_CLASSES
 SEMSEG_IDXS = [TASKS.index(task) for task in TASKS_SEMSEG]
+
+# from dataset.unified_dataset import Unified
+# SEMSEG_IDXS = [Unified.TASKS.index(task) for task in Unified.TASKS_CATEGORICAL]
+# SEMSEG_CLASSES = Unified.SEMSEG xxx
+
+# SEMSEG_IDXS = [Unified.TASKS.index(task) for task in Unified.TASKS_CATEGORICAL + \
+#                [('coco', task) for task in COCO.TASKS_KP_HUMAN]] # Add this to train human keypoint with loss_seg
 
 
 def generate_semseg_mask(t_idx):

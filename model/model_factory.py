@@ -1,6 +1,5 @@
 import os
-
-from dataset.taskonomy_constants import TASKS, TASKS_GROUP_DICT
+from dataset.unified_dataset import Unified
 
 from .beit.beit import BEiTEncoder, load_beit_ckpt
 from .dpt.dpt import DPT
@@ -28,12 +27,12 @@ def get_model(config, device=None, verbose=True, load_pretrained=True):
 
 def create_image_backbone(config, verbose=True, load_pretrained=True):
     if config.stage == 0:
-        n_tasks = len(TASKS)
+        n_tasks = len(Unified.TASKS)
     else:
         if config.task == 'segment_semantic':
             n_tasks = 1
         else:
-            n_tasks = len(TASKS_GROUP_DICT[config.task])
+            n_tasks = len(Unified.TASKS) # always bitfit True
     
     backbone = BEiTEncoder(
         config.image_backbone,
