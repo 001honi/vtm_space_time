@@ -11,6 +11,8 @@
             "program": "main.py",
             "console": "integratedTerminal",
             "justMyCode": true,
+            // "args": ["--stage","1","--task","reshading"]
+            // "args": ["-ne","-ns"]
             "args": ["--debug_mode","-ne","-ns"]
         }
     ]

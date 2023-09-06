@@ -71,6 +71,27 @@ parser.add_argument('--load_dir', type=str, default=None)
 parser.add_argument('--val_iter', '-viter', type=int, default=None)
 parser.add_argument('--save_iter', '-siter', type=int, default=None)
 
+# optional arguments
+# parser.add_argument('--seed', type=int, default=None)
+# parser.add_argument('--strategy', '-str', type=str, default=None)
+parser.add_argument('--dataset', type=str, default=None, choices=['unified', 'taskonomy', 'davis2016', 'davis2017', 'isic2018', 'duts', 'loveda', 'ap10k', 'eigen', 'kittiflow'])
+parser.add_argument('--taskonomy', type=str2bool, default=None)
+parser.add_argument('--coco', type=str2bool, default=None)
+parser.add_argument('--midair', type=str2bool, default=None)
+parser.add_argument('--openimages', type=str2bool, default=None)
+parser.add_argument('--unlabeled', type=str2bool, default=None)
+parser.add_argument('--coco_real', type=str2bool, default=None)
+parser.add_argument('--midair_real', type=str2bool, default=None)
+# parser.add_argument('--unlabeled_domains', type=str, nargs='+', default=None) # 'all' or some of ['ph2', 'animals10', 'potsdam']
+parser.add_argument('--uniform_task_sampling', '-uts', type=str2bool, default=None)
+parser.add_argument('--task_sampling_weight', '-tsw', type=float, nargs='+', default=None)
+parser.add_argument('--uniform_dataset_sampling', '-uds', type=str2bool, default=None)
+parser.add_argument('--base_task', type=str2bool, default=None)
+parser.add_argument('--cont_task', type=str2bool, default=None)
+parser.add_argument('--cat_task', type=str2bool, default=None)
+parser.add_argument('--benchmark_mode', '-bm', default=False, action='store_true')
+
+
 args = parser.parse_args()
 
 
@@ -94,7 +115,7 @@ for key in args.__dir__():
 # retrieve data root
 with open('data_paths.yaml', 'r') as f:
     path_dict = yaml.safe_load(f)
-    config.root_dir = path_dict[config.dataset]
+    config.path_dict = path_dict
     
 # for debugging
 if config.debug_mode:

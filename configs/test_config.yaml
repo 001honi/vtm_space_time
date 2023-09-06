@@ -1,6 +1,6 @@
 # environment settings
 seed: 0
-precision: bf16
+precision: fp16 #bf16
 strategy: ddp
 
 # data arguments
@@ -17,6 +17,8 @@ channel_idx: -1
 # model arguments
 model: VTM
 semseg_threshold: 0.2
+time_attention: True # 'False' for only space attention (VTM base model) 
+n_frames: 4 # number of frames attended in time attention
 
 # logging arguments
 log_dir: TEST

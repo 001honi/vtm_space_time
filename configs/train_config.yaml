@@ -1,10 +1,10 @@
 # environment settings
 seed: 0
-precision: 16 #bf16
+precision: fp16 #bf16
 strategy: ddp
 
 # data arguments
-dataset: taskonomy
+dataset: unified
 task_fold: 0
 num_workers: 4
 global_batch_size: 1
@@ -20,6 +20,20 @@ unary_augmentation: True
 binary_augmentation: True
 mixed_augmentation: True
 channel_idx: -1
+
+taskonomy: True
+midair: False
+openimages: False
+unlabeled: False
+uniform_task_sampling: False
+task_sampling_weight: [1., 3., 3., 1.]
+uniform_dataset_sampling: False
+base_task: True
+cont_task: True
+cat_task: True
+coco_real: True
+midair_real: True
+
 
 # model arguments
 model: VTM
