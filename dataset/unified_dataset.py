@@ -152,13 +152,7 @@ class UnifiedTrainDataset(Unified):
                         for task in dataset_dict['base'].TASKS_CATEGORICAL:
                             self.tasks.append((dataset_name, task))
                         self.categorical_size += len(self.categorical_datasets[-1])
-                # if config.knowledge_distill and 'unsupervised' in dataset_dict:
-                #     self.unsupervised_datasets.append(
-                #         dataset_dict['unsupervised'](**kwargs)
-                #     )
-                #     for task in dataset_dict['base'].TASKS_BASE:
-                #         self.tasks.append((dataset_name, task))
-                #     self.unsupervised_size += len(self.unsupervised_datasets[-1])
+
                 if verbose:
                     print(f'{dataset_name} dataset registered')
 
