@@ -59,7 +59,7 @@ class Unlabeled(Dataset):
     
 
     def __init__(self, path_dict, split, base_size=(256, 256), crop_size=(224, 224), 
-                 seed=None, precision='fp32', meta_dir='meta_info', domains=None):
+                 seed=None, precision='fp32', meta_dir='meta_info', sample_by_seq=False, sample_skip=False, domains=None):
         super().__init__()
 
         if seed is not None:

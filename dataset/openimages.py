@@ -49,7 +49,7 @@ class OpenImages(Dataset):
     TASKS = TASKS_BASE + TASKS_CONTINUOUS + TASKS_CATEGORICAL
 
     def __init__(self, path_dict, split, base_size=(256, 256), crop_size=(224, 224), 
-                 seed=None, precision='fp32', meta_dir='meta_info'):
+                 seed=None, precision='fp32', meta_dir='meta_info', sample_by_seq=False, sample_skip=False):
         super().__init__()
 
         if seed is not None:

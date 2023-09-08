@@ -10,7 +10,7 @@ from .unified_dataset import Unified
 
 class BaseDataset(Dataset):
     def __init__(self, root_dir, domains, tasks, component, base_size=(256, 256),
-                 img_size=(224, 224), seed=None, precision='fp32', meta_dir='meta_info'):
+                 img_size=(224, 224), seed=None, precision='fp32', meta_dir='meta_info',sample_by_seq=False, sample_skip=False):
         super().__init__()
 
         if seed is not None:
