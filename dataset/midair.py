@@ -89,7 +89,7 @@ class MidAir(Dataset):
     TASKS = TASKS_BASE + TASKS_CONTINUOUS + TASKS_CATEGORICAL
 
     def __init__(self, path_dict, split, component='training', base_size=(256, 256), crop_size=(224, 224), 
-                 seed=None, precision='fp32', meta_dir='meta_info'):
+                 seed=None, precision='fp32', meta_dir='meta_info', sample_by_seq=False, sample_skip=False):
         super().__init__()
 
         if seed is not None:
@@ -115,6 +115,9 @@ class MidAir(Dataset):
         self.sobel_detectors = [SobelEdgeDetector(kernel_size=k, sigma=s) for k, s in self.edge_params['params']]
         self.log_depth_range = torch.load(os.path.join(self.meta_info_path, 'midair_log_depth_range.pth'))
         self.class_dict = torch.load(os.path.join(self.meta_info_path, 'midair_class_dict.pth'))
+
+        self.sample_by_seq = sample_by_seq
+        self.sample_skip = sample_skip
         
     def _load_image(self, img_file):
         img_path = os.path.join(self.data_root, 'color_left', img_file)
@@ -377,14 +380,15 @@ class MidAirBaseDataset(MidAir):
         else:
             img_files = torch.load(img_file_path)
 
-        # permute image files
-        idxs_perm_path = os.path.join(self.meta_info_path, 'idxs_perm_all.pth')
-        if not os.path.exists(idxs_perm_path):
-            idxs_perm = torch.randperm(len(img_files))
-            torch.save(idxs_perm, idxs_perm_path)
-        else:
-            idxs_perm = torch.load(idxs_perm_path)
-        img_files = [img_files[idx] for idx in idxs_perm]
+        # permute image files if sequential sampling (video) is not True
+        if not self.sample_by_seq:
+            idxs_perm_path = os.path.join(self.meta_info_path, 'idxs_perm_all.pth')
+            if not os.path.exists(idxs_perm_path):
+                idxs_perm = torch.randperm(len(img_files))
+                torch.save(idxs_perm, idxs_perm_path)
+            else:
+                idxs_perm = torch.load(idxs_perm_path)
+            img_files = [img_files[idx] for idx in idxs_perm]
 
         # register image files within the specified domains
         self.img_files = [img_file for img_file in img_files
@@ -428,7 +432,15 @@ class MidAirBaseTrainDataset(MidAirBaseDataset):
         # sample image file indices for each domain
         file_idxs = np.array([], dtype=np.int64)
         for domain in domains:
-            file_idxs = np.concatenate((file_idxs,
+            if self.sample_by_seq:
+                file_idx_max = self.domain_dict[domain][-1]
+                file_idx = file_idx_max
+                while file_idx + (n_files-1)*self.sample_skip + 1 > file_idx_max:
+                    file_idx = np.random.choice(self.domain_dict[domain])
+                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*self.sample_skip + 1, 
+                                                                 self.sample_skip, dtype=np.int64)))
+            else:
+                file_idxs = np.concatenate((file_idxs,
                                         np.random.choice(self.domain_dict[domain], 
                                                          n_files // len(domains), replace=False)))
         return file_idxs
@@ -468,7 +480,11 @@ class MidAirBaseTrainDataset(MidAirBaseDataset):
                               base_size=self.base_size,
                               crop_size=self.crop_size,
                               random=True)
-        
+        # ### DEBUGGING
+        # frame_info = []
+        # for file_idx in file_idxs:
+        #     frame_info.append(self.img_files[file_idx])
+        # return X, Y, M, t_idx, frame_info
         return X, Y, M, t_idx
 
 
@@ -510,21 +526,23 @@ class MidAirCategoricalDataset(MidAir):
             img_files = torch.load(img_file_path)
         self.img_files = img_files
             
-        # permute per-class files
-        idxs_perm_path = os.path.join(self.meta_info_path, 'idxs_perm_classes.pth')
-        if not os.path.exists(idxs_perm_path):
-            idxs_perm = {}
-            for c in self.CLASS_IDXS:
-                idxs_perm[c] = torch.randperm(len(self.class_dict[c]))
-            torch.save(idxs_perm, idxs_perm_path)
-        else:
-            idxs_perm = torch.load(idxs_perm_path)
+        # permute per-class files if sequential sampling (video) is not True
+        if not self.sample_by_seq:
+            idxs_perm_path = os.path.join(self.meta_info_path, 'idxs_perm_classes.pth')
+            if not os.path.exists(idxs_perm_path):
+                idxs_perm = {}
+                for c in self.CLASS_IDXS:
+                    idxs_perm[c] = torch.randperm(len(self.class_dict[c]))
+                torch.save(idxs_perm, idxs_perm_path)
+            else:
+                idxs_perm = torch.load(idxs_perm_path)
 
-        self.class_dict = {
-            c: [self.class_dict[c][idx] for idx in idxs_perm[c]
-                if trajectory_from_path(self.img_files[self.class_dict[c][idx]]) in self.domains]
-            for c in self.CLASS_IDXS
-        }
+            self.class_dict = {
+                c: [self.class_dict[c][idx] for idx in idxs_perm[c]
+                    if trajectory_from_path(self.img_files[self.class_dict[c][idx]]) in self.domains]
+                for c in self.CLASS_IDXS
+            }
+
         self.n_imgs = sum([len(v) for v in self.class_dict.values()])
 
         # # register per-class image files within the specified domains
@@ -577,8 +595,16 @@ class MidAirCategoricalTrainDataset(MidAirCategoricalDataset):
         # sample image file indices for each domain
         file_idxs = np.array([], dtype=np.int64)
         for domain in domains:
-            file_idxs = np.concatenate((file_idxs,
-                                        np.random.choice(self.domain_dict[c][domain], 
+            if self.sample_by_seq:
+                file_idx_max = self.domain_dict[c][domain][-1]
+                file_idx = file_idx_max
+                while file_idx + (n_files-1)*self.sample_skip + 1 > file_idx_max:
+                    file_idx = np.random.choice(self.domain_dict[c][domain])
+                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*self.sample_skip + 1, 
+                                                                 self.sample_skip, dtype=np.int64)))
+            else:
+                file_idxs = np.concatenate((file_idxs,
+                                        np.random.choice(self.domain_dict[domain], 
                                                          n_files // len(domains), replace=False)))
         return file_idxs
  
@@ -605,7 +631,11 @@ class MidAirCategoricalTrainDataset(MidAirCategoricalDataset):
                               base_size=self.base_size,
                               crop_size=self.crop_size,
                               random=True)
-        
+        # ### DEBUGGING
+        # frame_info = []
+        # for file_idx in file_idxs:
+        #     frame_info.append(self.img_files[file_idx])
+        # return X, Y, M, t_idx, frame_info
         return X, Y, M, t_idx
 
 
@@ -640,7 +670,15 @@ class MidAirUnsupervisedTrainDataset(MidAirBaseDataset):
         # sample image file indices for each domain
         file_idxs = np.array([], dtype=np.int64)
         for domain in domains:
-            file_idxs = np.concatenate((file_idxs,
+            if self.sample_by_seq:
+                file_idx_max = self.domain_dict[domain][-1]
+                file_idx = file_idx_max
+                while file_idx + (n_files-1)*self.sample_skip + 1 > file_idx_max:
+                    file_idx = np.random.choice(self.domain_dict[domain])
+                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*self.sample_skip + 1, 
+                                                                 self.sample_skip, dtype=np.int64)))
+            else:
+                file_idxs = np.concatenate((file_idxs,
                                         np.random.choice(self.domain_dict[domain], 
                                                          n_files // len(domains), replace=False)))
         return file_idxs
@@ -676,6 +714,11 @@ class MidAirUnsupervisedTrainDataset(MidAirBaseDataset):
             Y = Y.bfloat16()
             M = M.bfloat16()
         
+        # ### DEBUGGING
+        # frame_info = []
+        # for file_idx in file_idxs:
+        #     frame_info.append(self.img_files[file_idx])
+        # return X, Y, M, t_idx, frame_info
         return X, Y, M, t_idx
 
 
