@@ -8,10 +8,10 @@ dataset: unified
 task_fold: 0
 num_workers: 4
 global_batch_size: 1
-max_channels: 1
+# max_channels: 2
 shot: 4
-n_buildings: -1
-domains_per_batch: 2
+# n_buildings: -1
+domains_per_batch: 1 # must be always 1 for now / hard-coded in uni-ds
 eval_batch_size: 1
 n_eval_batches: 10
 img_size: 224
@@ -20,6 +20,8 @@ unary_augmentation: True
 binary_augmentation: True
 mixed_augmentation: True
 channel_idx: -1
+sample_by_seq: True
+sample_skip: 8
 
 taskonomy: True
 midair: False

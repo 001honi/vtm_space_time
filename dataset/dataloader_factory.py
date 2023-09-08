@@ -94,6 +94,8 @@ def get_train_loader(config, pin_memory=True, verbose=True, get_support_data=Fal
         'crop_size': (config.img_size, config.img_size),
         'seed': config.seed + int(os.environ.get('LOCAL_RANK', 0)),
         'precision': config.precision,
+        'sample_by_seq': config.sample_by_seq,
+        'sample_skip': config.sample_skip
     }
 
     # create dataset for episodic training
