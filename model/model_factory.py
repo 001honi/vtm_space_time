@@ -31,6 +31,8 @@ def create_image_backbone(config, verbose=True, load_pretrained=True):
     else:
         if config.task == 'segment_semantic':
             n_tasks = 1
+        elif config.task == 'flow':
+            n_tasks = 2 
         else:
             n_tasks = len(Unified.TASKS) # always bitfit True
     

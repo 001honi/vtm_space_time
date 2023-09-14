@@ -209,15 +209,37 @@ def load_ckpt(ckpt_path, config_new=None):
 
 def select_task_specific_parameters(config, model, state_dict):
     if config.channel_idx < 0:
-        t_idx = torch.tensor([TASKS.index(task) for task in TASKS_GROUP_DICT[config.task]])
+        if config.task == 'pose_6d':
+            n_tasks = 9
+        elif config.task == 'flow':
+            n_tasks = 2
+        elif config.task == 'derain':
+            n_tasks = 3
+        elif config.task == 'semseg':
+            n_tasks = 7
+        elif config.task == 'animalkp':
+            n_tasks = 17
+        else:
+            n_tasks = 1
     else:
-        t_idx = torch.tensor([TASKS.index(f'{config.task}_{config.channel_idx}')])
+        n_tasks = 1
 
     # for fine-tuning
     bias_parameters = [f'model.{name}' for name in model.model.bias_parameter_names()]
     for key in state_dict.keys():
         if key in bias_parameters:
-            state_dict[key] = state_dict[key][t_idx]
+            state_dict[key] = state_dict[key].mean(0, keepdim=True).repeat(n_tasks, 1)
+
+    # if config.channel_idx < 0:
+    #     t_idx = torch.tensor([TASKS.index(task) for task in TASKS_GROUP_DICT[config.task]])
+    # else:
+    #     t_idx = torch.tensor([TASKS.index(f'{config.task}_{config.channel_idx}')])
+
+    # # for fine-tuning
+    # bias_parameters = [f'model.{name}' for name in model.model.bias_parameter_names()]
+    # for key in state_dict.keys():
+    #     if key in bias_parameters:
+    #         state_dict[key] = state_dict[key][t_idx]
 
 
 def load_model(config, verbose=True):

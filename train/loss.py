@@ -62,7 +62,12 @@ def compute_loss(model, train_data, config):
         M    : output mask of shape (B, T, N, 1, H, W)
         t_idx: task index of shape (B, T)
     '''
-    X, Y, M, t_idx = train_data
+    if config.stage == 0:
+        X, Y, M, t_idx = train_data
+    else:
+        X, Y, M = train_data
+        if config.task == 'flow':
+            X, X2 = X        
 
     # split the batches into support and query
     X_S, X_Q = X.split(math.ceil(X.size(2) / 2), dim=2)

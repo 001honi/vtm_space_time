@@ -9,13 +9,13 @@ task_fold: 0
 num_workers: 4
 global_batch_size: 1
 # max_channels: 2
-shot: 4
+shot: 2
 # n_buildings: -1
 domains_per_batch: 1 # must be always 1 for now / hard-coded in uni-ds
 eval_batch_size: 1
 n_eval_batches: 10
 img_size: 224
-image_augmentation: True
+image_augmentation: False # Horizontal Flip
 unary_augmentation: True
 binary_augmentation: True
 mixed_augmentation: True
@@ -23,8 +23,8 @@ channel_idx: -1
 sample_by_seq: True
 sample_skip: 8
 
-taskonomy: True
-midair: False
+taskonomy: False
+midair: True
 openimages: False
 unlabeled: False
 uniform_task_sampling: False
@@ -43,7 +43,7 @@ image_backbone: beit_base_patch16_224_in22k
 label_backbone: vit_base_patch16_224
 image_encoder_weights: imagenet
 time_attention: True # 'False' for only space attention (VTM base model) 
-n_frames: 4 # number of frames attended in time attention
+n_frames: 2 # number of frames attended in time attention
 drop_rate: 0.
 drop_path_rate: 0.1
 attn_drop_rate: 0.
@@ -54,7 +54,7 @@ n_levels: 4
 bitfit: True
 
 # training arguments
-n_steps: 300000
+n_steps: 300 #300000
 optimizer: adam
 lr: 0.0001
 lr_pretrained: 0.00001
@@ -72,6 +72,6 @@ log_dir: TRAIN
 save_dir: TRAIN
 load_dir: TRAIN
 log_iter: 100
-val_iter: 20000
+val_iter: 200 #20000
 save_iter: 20000
 load_step: -1

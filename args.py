@@ -2,8 +2,10 @@ import argparse
 import yaml
 from easydict import EasyDict
 
-from dataset.taskonomy_constants import TASKS_GROUP_NAMES, TASKS_GROUP_TEST
-
+# from dataset.taskonomy_constants import TASKS_GROUP_NAMES, TASKS_GROUP_TEST
+from dataset.midair import MidAir
+TASK_GROUP_NAMES, TASKS_GROUP_TEST = MidAir.TASK_GROUP_NAMES, MidAir.TASKS_GROUP_TEST
+ 
 
 def str2bool(v):
     if v == 'True' or v == 'true':
@@ -26,7 +28,7 @@ parser.add_argument('--no_save', '-ns', default=False, action='store_true')
 parser.add_argument('--reset_mode', '-reset', default=False, action='store_true')
 
 parser.add_argument('--stage', type=int, default=0, choices=[0, 1, 2])
-parser.add_argument('--task', type=str, default='', choices=['', 'all'] + TASKS_GROUP_NAMES)
+parser.add_argument('--task', type=str, default='', choices=['', 'all','flow'] + TASK_GROUP_NAMES)
 parser.add_argument('--task_fold', '-fold', type=int, default=None, choices=[0, 1, 2, 3, 4])
 parser.add_argument('--exp_name', type=str, default='')
 parser.add_argument('--exp_subname', type=str, default='')
@@ -140,8 +142,9 @@ if config.exp_name == '':
             config.exp_name = f'{config.model}_task:{config.task}{config.name_postfix}'
     else:
         fold_dict = {}
-        for fold in TASKS_GROUP_TEST:
-            for task in TASKS_GROUP_TEST[fold]:
-                fold_dict[task] = fold
-        task_fold = fold_dict[config.task]
-        config.exp_name = f'{config.model}_fold:{task_fold}{config.name_postfix}'
+        config.exp_name = "VTM_fold:0"
+        # for fold in TASKS_GROUP_TEST:
+        #     for task in TASKS_GROUP_TEST[fold]:
+        #         fold_dict[task] = fold
+        # task_fold = fold_dict[config.task]
+        # config.exp_name = f'{config.model}_fold:{task_fold}{config.name_postfix}'
