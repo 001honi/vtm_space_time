@@ -89,7 +89,7 @@ class MidAir(Dataset):
     TASKS = TASKS_BASE + TASKS_CONTINUOUS + TASKS_CATEGORICAL
 
     def __init__(self, path_dict, split, component='training', base_size=(256, 256), crop_size=(224, 224), 
-                 seed=None, precision='fp32', meta_dir='meta_info', sample_by_seq=False, sample_skip=False):
+                 seed=None, precision='fp32', meta_dir='meta_info', sample_by_seq=True, sample_skip=8):
         super().__init__()
 
         if seed is not None:
@@ -507,6 +507,8 @@ class MidAirBaseTestDataset(MidAirBaseDataset):
             return len(self.img_files)
         
     def __getitem__(self, idx):
+        idx = idx * self.sample_skip if self.sample_by_seq else idx
+
         X = self.load_images([idx])
         X, Y, M = self.load_labels(X, self.task_group, None, [idx])
 
