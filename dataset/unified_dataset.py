@@ -235,12 +235,14 @@ class UnifiedTrainDataset(Unified):
             dataset = self.unsupervised_datasets[dataset_idx]
 
         # sample episode
-        X, Y, M, t_idx = dataset.sample_episode(2*self.shot, 1)
+        X, Y, M, t_idx = dataset.sample_episode(n_files=self.shot, n_domains=2)
         
         # reindex task
         if t_idx.item() >= 0:
             task = dataset.TASKS[t_idx.item()]
             t_idx = torch.tensor(self.TASKS.index((dataset.NAME, task)))
+
+        X = X.float()
         
         return X[None], Y[None], M[None], t_idx[None] # add channel dimension
 
