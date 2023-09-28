@@ -683,7 +683,13 @@ class KittiFlowFinetuneDataset(KittiFlow):
                                    base_size=self.base_size,
                                    crop_size=self.img_size,
                                    random=(not self.fix_seed))
-            
+        # precision conversion
+        if self.precision == 'fp16':
+            X1 = X1.half()
+            X2 = X2.half()
+            Y = Y.half()
+            M = M.half()
+
         if self.precision == 'bf16':
             X1 = X1.to(torch.bfloat16)
             X2 = X2.to(torch.bfloat16)
@@ -1450,7 +1456,7 @@ class DownstreamUnsupervisedDataset(DownstreamBaseDataset):
         Y = torch.empty(X.shape[0], 1, X.shape[2], X.shape[3])
         M = torch.empty(X.shape[0], 1, X.shape[2], X.shape[3])
         t_idx = torch.tensor(-1)
-            
+
         if self.precision == 'bf16':
             X = X.to(torch.bfloat16)
             Y = Y.to(torch.bfloat16)
