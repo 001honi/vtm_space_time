@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 
 from .vit import (
+    _make_pretrained_vitb_rn50_384,
     _make_pretrained_vitl16_384,
     _make_pretrained_vitb16_384,
-    _make_pretrained_vitb16_224,
+    forward_vit,
 )
 
 
@@ -14,37 +15,48 @@ def _make_encoder(
     use_pretrained,
     groups=1,
     expand=False,
-    model=None,
-    in_chans=3,
-    time_attention=True,
-    n_frames=8
+    exportable=True,
+    hooks=None,
+    use_vit_only=False,
+    use_readout="ignore",
+    enable_attention_hooks=False,
 ):
     if backbone == "vitl16_384":
         pretrained = _make_pretrained_vitl16_384(
             use_pretrained,
-            in_chans=in_chans,
+            hooks=hooks,
+            use_readout=use_readout,
+            enable_attention_hooks=enable_attention_hooks,
         )
         scratch = _make_scratch(
             [256, 512, 1024, 1024], features, groups=groups, expand=expand
         )  # ViT-L/16 - 85.0% Top1 (backbone)
+    elif backbone == "vitb_rn50_384":
+        pretrained = _make_pretrained_vitb_rn50_384(
+            use_pretrained,
+            hooks=hooks,
+            use_vit_only=use_vit_only,
+            use_readout=use_readout,
+            enable_attention_hooks=enable_attention_hooks,
+        )
+        scratch = _make_scratch(
+            [256, 512, 768, 768], features, groups=groups, expand=expand
+        )  # ViT-H/16 - 85.0% Top1 (backbone)
     elif backbone == "vitb16_384":
         pretrained = _make_pretrained_vitb16_384(
             use_pretrained,
-            in_chans=in_chans,
+            hooks=hooks,
+            use_readout=use_readout,
+            enable_attention_hooks=enable_attention_hooks,
         )
         scratch = _make_scratch(
             [96, 192, 384, 768], features, groups=groups, expand=expand
         )  # ViT-B/16 - 84.6% Top1 (backbone)
-    elif backbone == "vitb16_224":
-        pretrained = _make_pretrained_vitb16_224(
-            use_pretrained,
-            in_chans=in_chans,
-            time_attention=time_attention,
-            n_frames=n_frames
-        )
+    elif backbone == "resnext101_wsl":
+        pretrained = _make_pretrained_resnext101_wsl(use_pretrained)
         scratch = _make_scratch(
-            [96, 192, 384, 768], features, groups=groups, expand=expand
-        )
+            [256, 512, 1024, 2048], features, groups=groups, expand=expand
+        )  # efficientnet_lite3
     else:
         print(f"Backbone '{backbone}' not implemented")
         assert False
@@ -105,15 +117,22 @@ def _make_scratch(in_shape, out_shape, groups=1, expand=False):
     return scratch
 
 
-def _make_fusion_block(features, use_bn):
-    return FeatureFusionBlock(
-        features,
-        nn.ReLU(False),
-        deconv=False,
-        bn=use_bn,
-        expand=False,
-        align_corners=True,
+def _make_resnet_backbone(resnet):
+    pretrained = nn.Module()
+    pretrained.layer1 = nn.Sequential(
+        resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool, resnet.layer1
     )
+
+    pretrained.layer2 = resnet.layer2
+    pretrained.layer3 = resnet.layer3
+    pretrained.layer4 = resnet.layer4
+
+    return pretrained
+
+
+def _make_pretrained_resnext101_wsl(use_pretrained):
+    resnet = torch.hub.load("facebookresearch/WSL-Images", "resnext101_32x8d_wsl")
+    return _make_resnet_backbone(resnet)
 
 
 class Interpolate(nn.Module):
@@ -126,7 +145,7 @@ class Interpolate(nn.Module):
             scale_factor (float): scaling
             mode (str): interpolation mode
         """
-        super(Interpolate, self).__init__()
+        super().__init__()
 
         self.interp = nn.functional.interpolate
         self.scale_factor = scale_factor
@@ -142,20 +161,18 @@ class Interpolate(nn.Module):
         Returns:
             tensor: interpolated data
         """
-        
+
         cast = False
         if x.dtype != torch.float32:
-            cast = True
             dtype = x.dtype
+            cast = True
             x = x.float()
-
         x = self.interp(
             x,
             scale_factor=self.scale_factor,
             mode=self.mode,
             align_corners=self.align_corners,
         )
-        
         if cast:
             x = x.to(dtype)
 
@@ -163,6 +180,85 @@ class Interpolate(nn.Module):
 
 
 class ResidualConvUnit(nn.Module):
+    """Residual convolution module."""
+
+    def __init__(self, features):
+        """Init.
+
+        Args:
+            features (int): number of features
+        """
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(
+            features, features, kernel_size=3, stride=1, padding=1, bias=True
+        )
+
+        self.conv2 = nn.Conv2d(
+            features, features, kernel_size=3, stride=1, padding=1, bias=True
+        )
+
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        """Forward pass.
+
+        Args:
+            x (tensor): input
+
+        Returns:
+            tensor: output
+        """
+        out = self.relu(x)
+        out = self.conv1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+
+        return out + x
+
+
+class FeatureFusionBlock(nn.Module):
+    """Feature fusion block."""
+
+    def __init__(self, features):
+        """Init.
+
+        Args:
+            features (int): number of features
+        """
+        super().__init__()
+
+        self.resConfUnit1 = ResidualConvUnit(features)
+        self.resConfUnit2 = ResidualConvUnit(features)
+
+    def forward(self, *xs):
+        """Forward pass.
+
+        Returns:
+            tensor: output
+        """
+        output = xs[0]
+
+        if len(xs) == 2:
+            output += self.resConfUnit1(xs[1])
+
+        output = self.resConfUnit2(output)
+
+        cast = False
+        if output.dtype != torch.float32:
+            dtype = output.dtype
+            cast = True
+            output = output.float()
+        output = nn.functional.interpolate(
+            output, scale_factor=2, mode="bilinear", align_corners=True
+        )
+        if cast:
+            output = output.to(dtype)
+
+        return output
+
+
+class ResidualConvUnit_custom(nn.Module):
     """Residual convolution module."""
 
     def __init__(self, features, activation, bn):
@@ -230,8 +326,10 @@ class ResidualConvUnit(nn.Module):
 
         return self.skip_add.add(out, x)
 
+        # return out + x
 
-class FeatureFusionBlock(nn.Module):
+
+class FeatureFusionBlock_custom(nn.Module):
     """Feature fusion block."""
 
     def __init__(
@@ -248,7 +346,7 @@ class FeatureFusionBlock(nn.Module):
         Args:
             features (int): number of features
         """
-        super(FeatureFusionBlock, self).__init__()
+        super().__init__()
 
         self.deconv = deconv
         self.align_corners = align_corners
@@ -270,8 +368,8 @@ class FeatureFusionBlock(nn.Module):
             groups=1,
         )
 
-        self.resConfUnit1 = ResidualConvUnit(features, activation, bn)
-        self.resConfUnit2 = ResidualConvUnit(features, activation, bn)
+        self.resConfUnit1 = ResidualConvUnit_custom(features, activation, bn)
+        self.resConfUnit2 = ResidualConvUnit_custom(features, activation, bn)
 
         self.skip_add = nn.quantized.FloatFunctional()
 
@@ -292,15 +390,14 @@ class FeatureFusionBlock(nn.Module):
 
         cast = False
         if output.dtype != torch.float32:
-            cast = True
             dtype = output.dtype
+            cast = True
             output = output.float()
         output = nn.functional.interpolate(
             output, scale_factor=2, mode="bilinear", align_corners=self.align_corners
         )
         if cast:
             output = output.to(dtype)
-        
 
         output = self.out_conv(output)
 

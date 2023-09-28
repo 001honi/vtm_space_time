@@ -1,11 +1,13 @@
 import torch
 import math
+from deepspeed.ops.adam import DeepSpeedCPUAdam
 
 
 optim_dict = {
     'sgd': torch.optim.SGD,
     'adam': torch.optim.Adam,
     'adamw': torch.optim.AdamW,
+    'cpuadam': DeepSpeedCPUAdam,
 }
 
 
@@ -19,7 +21,16 @@ def get_optimizer(config, model):
 
     # train only task-specific parameters for fine-tuning
     elif config.stage == 1:
-        learnable_params.append({'params': model.bias_parameters(), 'lr': config.lr})
+        if config.learning_to_bias and config.l2b_freeze_bias:
+            learnable_params.append({'params': model.t_idx, 'lr': config.lr})
+        else:
+            learnable_params.append({'params': model.bias_parameters(), 'lr': config.lr})
+        if getattr(config, 'head_tuning', False):
+            learnable_params.append({'params': model.head_parameters(), 'lr': config.lr})
+
+    # train only domain-specific parameters for domain adaptation
+    elif config.stage == 3:
+        learnable_params.append({'params': model.additional_bias_parameters(), 'lr': config.lr})
     
     kwargs = {}
     if config.optimizer == 'sgd':
@@ -29,9 +40,9 @@ def get_optimizer(config, model):
         lr_warmup = config.lr_warmup
     else:
         assert config.lr_warmup_scale >= 0. and config.lr_warmup_scale <= 1.
-        lr_warmup = int(config.lr_warmup_scale * config.n_steps)
-    lr_scheduler = CustomLRScheduler(optimizer, config.lr_schedule, config.lr, config.n_steps, lr_warmup,
-                                     decay_degree=config.lr_decay_degree)
+        lr_warmup = int(config.lr_warmup_scale * config.n_schedule_steps)
+    lr_scheduler = CustomLRScheduler(optimizer, config.lr_schedule, config.lr, config.n_schedule_steps, lr_warmup,
+                                     from_iter=config.schedule_from, decay_degree=config.lr_decay_degree)
     
     return optimizer, lr_scheduler
   
@@ -57,6 +68,9 @@ class CustomLRScheduler(object):
         self.lr_coefs = []
         for param_group in optimizer.param_groups:
             self.lr_coefs.append(param_group['lr'] / base_lr)
+
+        if self.iter > 0:
+            self.step(self.iter)
 
     def step(self, step=-1):
         # updatae current step

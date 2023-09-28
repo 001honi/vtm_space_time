@@ -1,9 +1,13 @@
 import torch
 import torch.nn as nn
 import math
+from einops import rearrange
 
 
 class CrossAttention(nn.Module):
+    '''
+    Multi-Head Cross-Attention layer for Matching
+    '''
     def __init__(self, dim_q, dim_v, dim_o, num_heads=4, act_fn=nn.GELU,
                  dr=0.1, pre_ln=True, ln=True, residual=True, dim_k=None):
         super().__init__()
@@ -76,20 +80,32 @@ class CrossAttention(nn.Module):
             
         return O
 
-    def forward(self, Q, K, V, mask=None, get_attn_map=False, disconnect_self_image=False, H=None, W=None, **kwargs):
+    def forward(self, Q, K, V, mask=None, get_attn_map=False, Q2=None, K2=None):
         # pre-layer normalization
         Q = self.pre_ln_q(Q)
         K = self.pre_ln_k(K)
+        if Q2 is not None:
+            assert K2 is not None
+            Q2 = self.pre_ln_q(Q2)
+            K2 = self.pre_ln_k(K2)
         
         # lienar projection
         Q = self.fc_q(Q)
         K = self.fc_k(K)
         V = self.fc_v(V)
+        if Q2 is not None:
+            Q2 = self.fc_q(Q2)
+            K2 = self.fc_k(K2)
 
         # split into multiple heads
         Q_ = torch.cat(Q.split(self.dim_split_q, 2), 0)
         K_ = torch.cat(K.split(self.dim_split_q, 2), 0)
         V_ = torch.cat(V.split(self.dim_split_v, 2), 0)
+        if Q2 is not None:
+            Q2_ = torch.cat(Q2.split(self.dim_split_q, 2), 0)
+            K2_ = torch.cat(K2.split(self.dim_split_q, 2), 0)
+            Q_ = torch.cat([Q_, Q2_], 2)
+            K_ = torch.cat([K_, K2_], 2)
         
         # scaled dot-product attention with mask and dropout
         L = Q_.bmm(K_.transpose(1, 2)) / self.temperature
@@ -98,11 +114,6 @@ class CrossAttention(nn.Module):
         # mask
         if mask is not None:
             mask = mask.transpose(1, 2).expand_as(L)
-        elif disconnect_self_image:
-            assert Q_.size(1) == K_.size(1)
-            assert H is not None and W is not None
-            N = Q_.size(1) // (H*W)
-            mask = torch.block_diag(*[torch.ones(H*W, H*W, device=Q.device) for _ in range(N)]).bool()
         
         if mask is not None:
             L.masked_fill(mask, -1e38)
@@ -128,3 +139,38 @@ class CrossAttention(nn.Module):
             return O, A
         else:
             return O
+        
+
+class MatchingModule(nn.Module):
+    '''
+    Matching Module of VTM
+    '''
+    def __init__(self, dim_w, dim_z, n_heads=4, n_levels=4):
+        super().__init__()
+        self.matching = nn.ModuleList([CrossAttention(dim_w, dim_z, dim_z, num_heads=n_heads)
+                                       for _ in range(n_levels)])
+        self.n_levels = n_levels
+            
+    def forward(self, W_Qs, W_Ss, Z_Ss):
+        if isinstance(W_Qs, tuple):
+            W_Qs, W_Q2s = W_Qs
+            W_Ss, W_S2s = W_Ss
+        else:
+            W_Q2s = W_S2s = None
+
+        B, T, N = W_Qs[0].shape[:3]
+        Z_Qs = []
+        for level in range(self.n_levels):
+            Q = rearrange(W_Qs[level][:, :, :, 1:], 'B T N n d -> (B T) (N n) d')
+            K = rearrange(W_Ss[level][:, :, :, 1:], 'B T N n d -> (B T) (N n) d')
+            V = rearrange(Z_Ss[level][:, :, :, 1:], 'B T N n d -> (B T) (N n) d')
+            if W_Q2s is not None:
+                Q2 = rearrange(W_Q2s[level][:, :, :, 1:], 'B T N n d -> (B T) (N n) d')
+                K2 = rearrange(W_S2s[level][:, :, :, 1:], 'B T N n d -> (B T) (N n) d')
+            else:
+                Q2 = K2 = None
+            O = self.matching[level](Q, K, V, Q2=Q2, K2=K2)
+            Z_Q = rearrange(O, '(B T) (N n) d -> B T N n d', B=B, T=T, N=N)
+            Z_Qs.append(Z_Q)
+        
+        return Z_Qs

@@ -1,24 +1,29 @@
 import torch
-from dataset.taskonomy_constants import SEMSEG_CLASSES
 
 
 class AverageMeter:
     r""" Stores loss, evaluation results """
-    def __init__(self, class_ids_interest, device=None):
+    def __init__(self, class_ids_interest, semseg_classes=None, device=None):
         if device is None:
             device = torch.device('cpu')
         if isinstance(class_ids_interest, int):
-            self.class_ids_interest = torch.tensor([class_ids_interest], device=device)
-        else:
-            self.class_ids_interest = torch.tensor(class_ids_interest, device=device)
+            class_ids_interest = [class_ids_interest]
+        if semseg_classes is None:
+            semseg_classes = class_ids_interest
 
-        self.nclass = len(SEMSEG_CLASSES)
+        self.device = device
+        self.class_ids_interest = torch.tensor(class_ids_interest, device=self.device, requires_grad=False)
+        self.semseg_classes = semseg_classes
+        self.nclass = len(self.class_ids_interest)
+        self.reset()
 
-        self.intersection_buf = torch.zeros([2, self.nclass], device=device).float()
-        self.union_buf = torch.zeros([2, self.nclass], device=device).float()
-        self.ones = torch.ones_like(self.union_buf)
+    def reset(self):
+        self.intersection_buf = torch.zeros([2, self.nclass], device=self.device, requires_grad=False).float()
+        self.union_buf = torch.zeros([2, self.nclass], device=self.device, requires_grad=False).float()
+        self.ones = torch.ones_like(self.union_buf, requires_grad=False)
         self.loss_buf = []
 
+    @torch.inference_mode()
     def update(self, inter_b, union_b, class_id):
         self.intersection_buf.index_add_(1, class_id, inter_b.float())
         self.union_buf.index_add_(1, class_id, union_b.float())

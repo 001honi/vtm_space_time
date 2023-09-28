@@ -1,31 +1,37 @@
 # environment settings
 seed: 0
-precision: fp16 #bf16
+precision: fp32 #bf16
 strategy: ddp
 
 # data arguments
 dataset: kittiflow
-num_workers: 4
-global_batch_size: 1
+num_workers: 1
+global_batch_size: 2
+max_channels: 1 # ?? IS IT ALWAYS 1 for FINETUNENING 
 shot: 10
-eval_batch_size: 5
-n_eval_batches: 2
+eval_batch_size: 4
+n_eval_batches: 1
 img_size: 224
+image_augmentation: False # Horizontal Flip
 support_idx: 0
 channel_idx: -1
+use_valid: True 
+class_name: none
+
+sample_by_seq: True
+sample_skip: 8
 
 # model arguments
-model: VTM
 semseg_threshold: 0.2
 attn_dropout: 0.5
-time_attention: True # 'False' for only space attention (VTM base model) 
-n_frames: 2 # number of frames attended in time attention
+time_attn: 0 # time_attn < 2 only space attention (VTM base model) 
 
 # training arguments
 n_steps: 20000
 n_schedule_steps: 20000
 optimizer: adam
 lr: 0.005
+lr_pretrained: 0.0002
 lr_schedule: constant 
 lr_warmup: 0
 lr_warmup_scale: 0.
@@ -34,12 +40,23 @@ weight_decay: 0.
 lr_decay_degree: 0.9
 mask_value: -1.
 early_stopping_patience: 5
+interaction_drop: 0
+bitfit_init: avg 
+multimodal_softmax_loss: False
+multimodal_mse_loss: False
+temp_msl: 1.0
+dynamic_support: False
+dynamic_support_interval: 2
+average_real_bias_only: False
+l2b_freeze_bias: False
+permute_classes: False
+patches_per_img: 9
+additional_bias: False
 
 # logging arguments
-log_dir: FINETUNE
-save_dir: FINETUNE
-load_dir: TRAIN
-log_iter: 100
+log_dir: FINETUNE-S
+save_dir: FINETUNE-S
+load_dir: TRAIN-S
+load_dir_aux: DOMAIN_ADAPTATION
 val_iter: 100
-save_iter: 100
 load_step: 0

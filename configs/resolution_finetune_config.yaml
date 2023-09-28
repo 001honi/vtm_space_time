@@ -1,0 +1,59 @@
+# environment settings
+seed: 0
+precision: bf16
+strategy: deepspeed
+
+# data arguments
+dataset: taskonomy
+num_workers: 16
+global_batch_size: 8
+max_channels: 5
+shot: 4
+n_buildings: -1
+domains_per_batch: 2
+eval_batch_size: 8
+n_eval_batches: 10
+img_size: 384
+image_augmentation: True
+unary_augmentation: True
+binary_augmentation: True
+mixed_augmentation: True
+channel_idx: -1
+
+# model arguments
+image_encoder: beit_base_patch16_384
+label_encoder: vit_base_patch16_384
+image_encoder_drop_path_rate: 0.1
+label_encoder_drop_path_rate: 0.
+n_attn_heads: 4
+n_attn_layers: 1
+semseg_threshold: 0.2
+channel_idx: -1
+qkv_bitfit: True
+channel_interaction: False
+support_interaction: False
+channel_bitfit: False
+local_bitfit: False
+
+# training arguments
+n_steps: 100000
+n_schedule_steps: 400000
+optimizer: adam
+lr: 0.0001
+lr_pretrained: 0.00001
+lr_schedule: poly
+lr_warmup: 5000
+lr_warmup_scale: 0.
+schedule_from: 300000
+weight_decay: 0.
+lr_decay_degree: 0.9
+mask_value: -1.
+early_stopping_patience: -1
+
+# logging arguments
+log_dir: RES_FINETUNE
+save_dir: RES_FINETUNE
+load_dir: TRAIN
+log_iter: 100
+val_iter: 10000
+save_iter: 10000

@@ -1,0 +1,38 @@
+# environment settings
+seed: 0
+precision: bf16
+strategy: ddp
+
+# data arguments
+dataset: davis2016
+num_workers: 8
+global_batch_size: 4
+max_channels: 5
+shot: 4
+eval_batch_size: 8
+n_eval_batches: 10
+img_size: 224
+class_name: none
+knowledge_distill: False
+base_task: True
+
+# training arguments
+n_steps: 10000
+n_schedule_steps: 10000
+optimizer: adam
+lr: 0.00001
+lr_pretrained: 0.0002
+lr_schedule: constant 
+lr_warmup: 0
+lr_warmup_scale: 0.
+schedule_from: 0
+weight_decay: 0.
+lr_decay_degree: 0.9
+mask_value: -1.
+
+# logging arguments
+log_dir: DOMAIN_ADAPTATION
+save_dir: DOMAIN_ADAPTATION
+load_dir: TRAIN
+val_iter: 100
+load_step: 0

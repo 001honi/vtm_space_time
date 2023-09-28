@@ -4,9 +4,9 @@ precision: fp16 #bf16
 strategy: ddp
 
 # data arguments
-dataset: taskonomy
-test_split: muleshoe
-num_workers: 4
+dataset: kittiflow
+test_split: test
+num_workers: 1
 shot: 10
 eval_batch_size: 8
 n_eval_batches: -1
@@ -14,14 +14,17 @@ img_size: 224
 support_idx: 0
 channel_idx: -1
 
+sample_by_seq: True
+sample_skip: 8
+
 # model arguments
-model: VTM
 semseg_threshold: 0.2
-time_attention: True # 'False' for only space attention (VTM base model) 
-n_frames: 4 # number of frames attended in time attention
+dynamic_support: False
+dense_crf: False
 
 # logging arguments
 log_dir: TEST
+load_dir_aux: DOMAIN_ADAPTATION
 save_dir: FINETUNE
 load_dir: TRAIN
 load_step: 0

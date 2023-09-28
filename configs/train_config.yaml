@@ -1,29 +1,12 @@
 # environment settings
 seed: 0
-precision: fp16 #bf16
-strategy: ddp
+precision: fp32 #bf16
+strategy: ddp #deepspeed
 
 # data arguments
 dataset: unified
-task_fold: 0
-num_workers: 4
-global_batch_size: 1
-# max_channels: 2
-shot: 2
-# n_buildings: -1
-domains_per_batch: 1 # must be always 1 for now / hard-coded in uni-ds
-eval_batch_size: 1
-n_eval_batches: 10
-img_size: 224
-image_augmentation: False # Horizontal Flip
-unary_augmentation: True
-binary_augmentation: True
-mixed_augmentation: True
-channel_idx: -1
-sample_by_seq: True
-sample_skip: 8
-
 taskonomy: False
+coco: False
 midair: True
 openimages: False
 unlabeled: False
@@ -36,25 +19,64 @@ cat_task: True
 coco_real: True
 midair_real: True
 
+task_fold: 0
+num_workers: 8
+global_batch_size: 1 #28
+max_channels: 2
+shot: 2
+n_buildings: -1
+domains_per_batch: 2
+eval_batch_size: 2 # EVAL BATCH GPU SIZE CHECK
+n_eval_batches: 1
+img_size: 224
+image_augmentation: False # Horizontal Flip
+unary_augmentation: True
+binary_augmentation: True
+mixed_augmentation: False 
+trivial_augmentation: False
+order_mixup: True
+channel_idx: -1
+
+sample_by_seq: True
+sample_skip: 8
 
 # model arguments
 model: VTM
-image_backbone: beit_base_patch16_224_in22k
-label_backbone: vit_base_patch16_224
-image_encoder_weights: imagenet
-time_attention: True # 'False' for only space attention (VTM base model) 
-n_frames: 2 # number of frames attended in time attention
-drop_rate: 0.
-drop_path_rate: 0.1
-attn_drop_rate: 0.
-n_attn_heads: 4
+image_encoder: beit_base_patch16_224_in22k
+label_encoder: vit_base_patch16_224
+time_attn: 0 #  time_attn < 2 only space attention (VTM base model) 
+decoder_features: 96
+deconv_head: False
+image_encoder_drop_path_rate: 0.1
+label_encoder_drop_path_rate: 0.
+n_attn_heads: 12
 semseg_threshold: 0.2
 channel_idx: -1
+bitfit: False # !!!   BITFIT FALSE
+qkv_bitfit: False  # !!! 
+n_channel_interaction_blocks: 0
+channel_interaction_type: global
+post_channel_interaction: False
+interaction_drop: -1
+knowledge_distill: False
+teacher_encoder:
+  - vit_large_patch14_224_clip_laion2b
+  - vit_base_patch16_224_miil_in21k
+  # - vit_huge_patch14_224_in21k
+  - dpt_segmentation_hybrid_ade20k
+  - dpt_depth_large_midas
+n_pseudo_channels: 1
+distill_weight: 0.05
+n_val_pseudo_channels: 3
 n_levels: 4
-bitfit: True
+distill_start_block: 0
+dpt_seg_bce: False
+l2b_pre_projection: False
+additional_bias: False
 
 # training arguments
-n_steps: 300 #300000
+n_steps: 300000 
+n_schedule_steps: -1
 optimizer: adam
 lr: 0.0001
 lr_pretrained: 0.00001
@@ -66,12 +88,19 @@ weight_decay: 0.
 lr_decay_degree: 0.9
 mask_value: -1.
 early_stopping_patience: -1
+multimodal_softmax_loss: False
+spatial_softmax_loss: False
+mse_loss: False
+learning_to_bias: False
+n_bias_sets: 100
+ema_beta: 0.999
+ema_update_after_step: 100
+ema_update_every: 10
 
 # logging arguments
-log_dir: TRAIN
-save_dir: TRAIN
-load_dir: TRAIN
-log_iter: 100
-val_iter: 200 #20000
-save_iter: 20000
+log_dir: TRAIN-SPACE
+save_dir: TRAIN-SPACE
+load_dir: TRAIN-SPACE
+val_iter: 25000
+monitor: summary/mtrain_valid_pred
 load_step: -1
