@@ -287,19 +287,28 @@ class Block(nn.Module):
     def forward(self, x, b_idx=None, T=0, interaction_mask=None, vtm_shape=None):
         if self.time_attn:
             B,T,N,C,H,W = vtm_shape
-            x = x[:, 1:]
-            x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N)
-            x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N)
-            x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W)
-            x = self.drop_path0(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx))
-            x = rearrange(x, '(B T H W) N d -> (B T) (H W N) d',B=B,T=T,N=N,H=H,W=W)
+            x = x[:, 1:] # Nx196x768 ; B=T=1
+            x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # Nx196x768 -> 196xNx768 ; B=T=1
+            x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # 196xNx768 -> 1x392x768 ; B=T=1
+            x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> 196xNx768 ; B=T=1
+            x = self.drop_path0(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
+            # [Uncomment only one] ---------------------------------------------
+            x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
+            # ------------------------------------------------------------------
+            # Temporal FC (Type 0) (Old)
+            # x = rearrange(x, '(B T H W) N d -> (B T) (H W N) d',B=B,T=T,N=N,H=H,W=W) # 196xNx768 -> 1x392x768 ; B=T=1
             # x = x + self.temp_fc(x, b_idx)
-            # Change back the arrangement
-            x = rearrange(x, '(B T) (H W N) d -> (B T N) (H W) d',B=B,T=T,N=N,H=H,W=W)
-
+            # x = rearrange(x, '(B T) (H W N) d -> (B T N) (H W) d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> Nx196x768 ; B=T=1
+            # ------------------------------------------------------------------
+            # Temporal FC (Type I)
+            # x = x + self.temp_fc(x, b_idx) # 196xNx768 ; B=T=1
+            # x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
+            # ------------------------------------------------------------------
+            # Temporal FC (Type II)
+            # x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
+            # x = x + self.temp_fc(x, b_idx)
             init_cls_token = x[:,0,:].unsqueeze(1)
             cls_token = init_cls_token.repeat(1, 1, 1)
-            # cls_token = rearrange(cls_token, '(B T) N d -> (B T N) d',B=B,T=T,N=N).unsqueeze(1)
             x = torch.cat((cls_token, x), dim=1)
 
         x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x, b_idx), b_idx)))
@@ -688,15 +697,14 @@ class VisionTransformer(nn.Module):
         x = self.patch_embed(x)
         x = self._pos_embed(x)
 
-       # time embedding
+        # time embedding
         if self.time_attn:
             B,T,N,C,H,W = vtm_shape
             W = H = H // self.patch_embed.patch_size[0]
             vtm_shape = (B,T,N,C,H,W)
             # Separate CLS token
-            # cls_token = x[:B, 0, :].unsqueeze(1)
             x = x[:, 1:]
-            x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N)
+            x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # Nx196x768 -> 196xNx768 ; B=T=1 
             # Interpolation, in case embedding size mismatch in the inference
             if x.shape[1] != self.time_embed.shape[1]:
                 x = x + F.interpolate(self.time_embed.transpose(1,2),
@@ -705,9 +713,8 @@ class VisionTransformer(nn.Module):
                 x = x + self.time_embed
             x = self.time_drop(x)
 
-            x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N)
-
-            # add cls token for space attn 
+            x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
+            # Add CLS token 
             x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
             
         x = self.norm_pre(x, b_idx)
