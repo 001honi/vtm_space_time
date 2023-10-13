@@ -615,8 +615,12 @@ class KittiFlowFinetuneDataset(KittiFlow):
             self.data_idxs = self.data_idxs[train_idxs]
         elif split == 'valid':
             self.data_idxs = self.data_idxs[valid_idxs]
+            self.data_idxs = self.data_idxs[:-1]
         else:
             self.data_idxs = self.data_idxs[test_idxs]
+
+        self.getitem_counter = 0
+        self.return_first_im = True
         
     def __len__(self):
         return self.dset_size
@@ -656,6 +660,8 @@ class KittiFlowFinetuneDataset(KittiFlow):
         return train_idxs, valid_idxs, test_idxs
 
     def __getitem__(self, idx):
+        self.getitem_counter = 0 if self.getitem_counter >= len(self.data_idxs) else self.getitem_counter
+        idx = self.data_idxs[self.getitem_counter]
         idx = idx % len(self._image_list)
         X1, X2, Y, M = super().__getitem__(idx)
         X1 = X1.resize(self.base_size, Image.BILINEAR)
@@ -696,7 +702,15 @@ class KittiFlowFinetuneDataset(KittiFlow):
             Y = Y.to(torch.bfloat16)
             M = M.to(torch.bfloat16)
         
-        return (X1, X2), Y, M
+        if self.return_first_im:
+            X = X1; Y = Y[0].unsqueeze(0); M = M[0].unsqueeze(0)
+            self.return_first_im = False
+        else:
+            X = X2; Y = Y[0].unsqueeze(0); M = M[1].unsqueeze(0) # (!) return same label channel
+            self.return_first_im = True
+            self.getitem_counter += 1
+            
+        return X, Y, M
 
 
 class AP10KFinetuneDataset(Dataset):
