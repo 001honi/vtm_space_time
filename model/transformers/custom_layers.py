@@ -41,13 +41,14 @@ class Linear(nn.Linear):
                         bias = self.bias[b_idx][:, None]
                 elif input.shape[1] == b_idx.shape[0]: # default time arrangement (B=T=1)
                     bias = self.bias[b_idx][None, :]
-                else:   # validation step 5-crop with more than one tasks T 
-                    b_idx_unique = b_idx.unique()
-                    T = len(b_idx_unique)
-                    BHWT, N5, _ = output.shape; BHW = BHWT//T
+                else:   # B or T > 1 in time attn operations 
+                    BHWT, N, _ = output.shape
+                    bias_split_n = len(b_idx) // N
+                    bias_split_size = BHWT // bias_split_n 
                     bias_splits = []
-                    for b in b_idx_unique:
-                        bias_split = self.bias[b].repeat(BHW, N5, 1)
+                    for i in range(bias_split_n):
+                        b = b_idx[i*N]
+                        bias_split = self.bias[b].repeat(bias_split_size, N, 1)
                         bias_splits.append(bias_split)
                     bias = torch.concat(bias_splits)
             else:
@@ -88,16 +89,16 @@ class LayerNorm(nn.LayerNorm):
                     bias = self.bias[b_idx][:, None]
                 elif input.shape[1] == b_idx.shape[0]: # default time arrangement (B=T=1)
                     bias = self.bias[b_idx][None, :]
-                else:   # validation step 5-crop with more than one tasks T 
-                    b_idx_unique = b_idx.unique()
-                    T = len(b_idx_unique)
-                    BHWT, N5, _ = output.shape; BHW = BHWT//T
+                else:   # B or T > 1 in time attn operations 
+                    BHWT, N, _ = output.shape
+                    bias_split_n = len(b_idx) // N
+                    bias_split_size = BHWT // bias_split_n 
                     bias_splits = []
-                    for b in b_idx_unique:
-                        bias_split = self.bias[b].repeat(BHW, N5, 1)
+                    for i in range(bias_split_n):
+                        b = b_idx[i*N]
+                        bias_split = self.bias[b].repeat(bias_split_size, N, 1)
                         bias_splits.append(bias_split)
                     bias = torch.concat(bias_splits)
-
             else:
                 bias_mh = torch.stack(self.bias.split(self.bias.shape[1] // b_idx.shape[1], dim=1), 0)
                 bias = torch.einsum('bhn,hnd->bhd', b_idx, bias_mh)

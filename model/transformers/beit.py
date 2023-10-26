@@ -220,14 +220,15 @@ class Attention(nn.Module):
                     elif x.shape[1] == b_idx.shape[0]:
                         qkv_bias = torch.cat((self.q_bias[b_idx][None, :], self.k_bias[b_idx][None, :], self.v_bias[b_idx][None, :]), 2)
                     else:
-                        b_idx_unique = b_idx.unique()
-                        T = len(b_idx_unique)
-                        BHWT, N5, _ = x.shape; BHW = BHWT//T
+                        BHWT, N, _ = x.shape
+                        bias_split_n = len(b_idx) // N
+                        bias_split_size = BHWT // bias_split_n 
                         qkv_bias_splits = []
-                        for b in b_idx_unique:
-                            q_bias = self.q_bias[b].repeat(BHW, N5, 1)
-                            k_bias = self.k_bias[b].repeat(BHW, N5, 1)
-                            v_bias = self.v_bias[b].repeat(BHW, N5, 1)
+                        for i in range(bias_split_n):
+                            b = b_idx[i*N]
+                            q_bias = self.q_bias[b].repeat(bias_split_size, N, 1)
+                            k_bias = self.k_bias[b].repeat(bias_split_size, N, 1)
+                            v_bias = self.v_bias[b].repeat(bias_split_size, N, 1)
                             qkv_bias_split = torch.cat((q_bias,k_bias,v_bias),2)
                             qkv_bias_splits.append(qkv_bias_split)
                         qkv_bias = torch.concat(qkv_bias_splits)
@@ -253,6 +254,7 @@ class Attention(nn.Module):
 
         if self.relative_position_bias_table is not None:
             if attn.shape[-1] == self._get_rel_pos_bias().shape[-1]: #FIXME 5-Crop interpolation
+                # if self._get_rel_pos_bias().shape[-1] != 2:
                 attn = attn + self._get_rel_pos_bias()
         if shared_rel_pos_bias is not None:
             attn = attn + shared_rel_pos_bias
@@ -286,7 +288,7 @@ class Block(nn.Module):
             self.attn_t = Attention(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
             window_size=(time_attn-1,1), attn_head_dim=attn_head_dim, n_bias_sets=n_bias_sets, additional_bias=additional_bias, qkv_bitfit=qkv_bitfit)
-            self.temp_fc = Linear(n_bias_sets, additional_bias, dim, dim)
+            # self.temp_fc = Linear(n_bias_sets, additional_bias, dim, dim)
         
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -311,6 +313,7 @@ class Block(nn.Module):
                 x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> 196xNx768 ; B=T=1
                 x = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
                 # [Uncomment only one] ---------------------------------------------
+                # x = x + self.temp_fc(x, b_idx)
                 x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
                 # ------------------------------------------------------------------
                 # Temporal FC (Type 0) (Old)
@@ -341,6 +344,7 @@ class Block(nn.Module):
                 x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> 196xNx768 ; B=T=1
                 x = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
                 # [Uncomment only one] ---------------------------------------------
+                # x = x + self.temp_fc(x, b_idx)
                 x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
                 # ------------------------------------------------------------------
                 # Temporal FC (Type 0) (Old)
@@ -442,16 +446,16 @@ class Beit(nn.Module):
             self.head.weight.data.mul_(head_init_scale)
             self.head.bias.data.mul_(head_init_scale)
 
-        # initialization of temporal attention weights (TimeSformer'21)
-        if time_attn:
-            i = 0
-            for m in self.blocks.modules():
-                m_str = str(m)
-                if 'Block' in m_str:
-                    if i > 0:
-                      nn.init.constant_(m.temp_fc.weight, 0)
-                      nn.init.constant_(m.temp_fc.bias, 0)
-                    i += 1
+        # # initialization of temporal attention weights (TimeSformer'21)
+        # if time_attn:
+        #     i = 0
+        #     for m in self.blocks.modules():
+        #         m_str = str(m)
+        #         if 'Block' in m_str:
+        #             if i > 0:
+        #               nn.init.constant_(m.temp_fc.weight, 0)
+        #               nn.init.constant_(m.temp_fc.bias, 0)
+        #             i += 1
 
         self.feature_blocks = [level * (len(self.blocks) // n_feature_levels) - 1 for level in range(1, n_feature_levels + 1)]
 
@@ -610,6 +614,10 @@ def beit_base_patch16_384(pretrained=False, **kwargs):
 def beit_base_patch16_224_in22k(pretrained=False, **kwargs):
     model_kwargs = dict(
         patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4,
+        use_abs_pos_emb=False, use_rel_pos_bias=True, init_values=0.1, **kwargs)
+    if kwargs['img_size'] == 64:
+        model_kwargs = dict(
+        patch_size=8, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4,
         use_abs_pos_emb=False, use_rel_pos_bias=True, init_values=0.1, **kwargs)
     model = _create_beit('beit_base_patch16_224_in22k', pretrained=pretrained, **model_kwargs)
     return model
