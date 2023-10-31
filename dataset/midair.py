@@ -428,17 +428,20 @@ class MidAirBaseTrainDataset(MidAirBaseDataset):
     
     def sample_files(self, domains, n_files):
         assert n_files % len(domains) == 0
-
+        sample_skip = self.sample_skip
         # sample image file indices for each domain
         file_idxs = np.array([], dtype=np.int64)
         for domain in domains:
             if self.sample_by_seq:
                 file_idx_max = self.domain_dict[domain][-1]
-                file_idx = file_idx_max
-                while file_idx + (n_files-1)*self.sample_skip + 1 > file_idx_max:
+                file_idx = file_idx_max; count = 0
+                while file_idx + (n_files-1)*sample_skip + 1 > file_idx_max:
                     file_idx = np.random.choice(self.domain_dict[domain])
-                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*self.sample_skip + 1, 
-                                                                 self.sample_skip, dtype=np.int64)))
+                    count += 1
+                    if count > len(self.domain_dict[domain]): 
+                        sample_skip = sample_skip // 2 if sample_skip > 1 else 1
+                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*sample_skip + 1, 
+                                                                 sample_skip, dtype=np.int64)))
             else:
                 file_idxs = np.concatenate((file_idxs,
                                         np.random.choice(self.domain_dict[domain], 
@@ -593,20 +596,24 @@ class MidAirCategoricalTrainDataset(MidAirCategoricalDataset):
     
     def sample_files(self, c, domains, n_files):
         assert n_files % len(domains) == 0
-        
+        sample_skip = self.sample_skip
         # sample image file indices for each domain
         file_idxs = np.array([], dtype=np.int64)
         for domain in domains:
             if self.sample_by_seq:
                 file_idx_max = self.domain_dict[c][domain][-1]
                 file_idx = file_idx_max
-                while file_idx + (n_files-1)*self.sample_skip + 1 > file_idx_max:
+                file_idx = file_idx_max; count = 0
+                while file_idx + (n_files-1)*sample_skip + 1 > file_idx_max:
                     file_idx = np.random.choice(self.domain_dict[c][domain])
-                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*self.sample_skip + 1, 
-                                                                 self.sample_skip, dtype=np.int64)))
+                    count += 1
+                    if count > len(self.domain_dict[c][domain]): 
+                        sample_skip = sample_skip // 2 if sample_skip > 1 else 1
+                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*sample_skip + 1, 
+                                                                 sample_skip, dtype=np.int64)))
             else:
                 file_idxs = np.concatenate((file_idxs,
-                                        np.random.choice(self.domain_dict[domain], 
+                                        np.random.choice(self.domain_dict[c][domain], 
                                                          n_files // len(domains), replace=False)))
         return file_idxs
  
@@ -668,17 +675,21 @@ class MidAirUnsupervisedTrainDataset(MidAirBaseDataset):
     
     def sample_files(self, domains, n_files):
         assert n_files % len(domains) == 0
-
+        self.sample_skip = sample_skip
         # sample image file indices for each domain
         file_idxs = np.array([], dtype=np.int64)
         for domain in domains:
             if self.sample_by_seq:
                 file_idx_max = self.domain_dict[domain][-1]
                 file_idx = file_idx_max
-                while file_idx + (n_files-1)*self.sample_skip + 1 > file_idx_max:
+                file_idx = file_idx_max; count = 0
+                while file_idx + (n_files-1)*sample_skip + 1 > file_idx_max:
                     file_idx = np.random.choice(self.domain_dict[domain])
-                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*self.sample_skip + 1, 
-                                                                 self.sample_skip, dtype=np.int64)))
+                    count += 1 
+                    if count > len(self.domain_dict[domain]): 
+                        sample_skip = sample_skip // 2 if sample_skip > 1 else 1
+                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*sample_skip + 1, 
+                                                                 sample_skip, dtype=np.int64)))
             else:
                 file_idxs = np.concatenate((file_idxs,
                                         np.random.choice(self.domain_dict[domain], 
