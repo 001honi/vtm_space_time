@@ -23,11 +23,13 @@ class VTM(nn.Module):
                                         drop_path_rate=config.image_encoder_drop_path_rate,
                                         qkv_bitfit=getattr(config, 'qkv_bitfit', True),
                                         additional_bias=getattr(config, 'additional_bias', False),
-                                        time_attn=config.time_attn)
+                                        time_attn=config.time_attn,
+                                        img_size=config.img_size)
         self.label_encoder = ViTEncoder(config.label_encoder, pretrained=False, in_chans=1, n_bias_sets=0,
                                         n_levels=config.n_levels,
                                         drop_path_rate=config.label_encoder_drop_path_rate,
-                                        time_attn=config.time_attn)
+                                        time_attn=config.time_attn,
+                                        img_size=config.img_size)
         self.matching_module = MatchingModule(self.image_encoder.backbone.embed_dim,
                                               self.label_encoder.backbone.embed_dim,
                                               config.n_attn_heads, n_levels=config.n_levels)
@@ -71,7 +73,8 @@ class VTM(nn.Module):
                 yield p
 
     def forward(self, X_S, Y_S, X_Q, t_idx=None):
-
+        # self.image_encoder.time_attn = False
+        # self.label_encoder.time_attn = False
         # encode query input, support input and output
         if isinstance(X_S, tuple):
             X_S1, X_S2 = X_S
@@ -79,10 +82,10 @@ class VTM(nn.Module):
             W_Qs = self.image_encoder(X_Q1, t_idx), self.image_encoder(X_Q2, t_idx)
             W_Ss = self.image_encoder(X_S1, t_idx), self.image_encoder(X_S2, t_idx)
         else:
-            W_Qs = self.image_encoder(X_Q, t_idx)
-            W_Ss = self.image_encoder(X_S, t_idx)
+            W_Qs = self.image_encoder(X_Q.float(), t_idx)
+            W_Ss = self.image_encoder(X_S.float(), t_idx)
 
-        Z_Ss = self.label_encoder(Y_S)
+        Z_Ss = self.label_encoder(Y_S.float())
 
         # mix support output by matching
         Z_Q_preds = self.matching_module(W_Qs, W_Ss, Z_Ss)

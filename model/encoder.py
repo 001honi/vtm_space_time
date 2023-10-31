@@ -11,7 +11,7 @@ class ViTEncoder(nn.Module):
     Vision Transformer encoder wrapper for VTM
     '''
     def __init__(self, backbone, pretrained, in_chans, n_bias_sets, n_levels=4, qkv_bitfit=True, 
-                 additional_bias=False, time_attn=0, **kwargs):
+                 additional_bias=False, time_attn=0, img_size=224, **kwargs):
         super().__init__()
         self.backbone = create_model(
             backbone,
@@ -23,6 +23,7 @@ class ViTEncoder(nn.Module):
             additional_bias=additional_bias,
             qkv_bitfit=qkv_bitfit,
             time_attn=time_attn,
+            img_size=img_size,
             **kwargs
         )
         self.grid_size = self.backbone.patch_embed.grid_size
