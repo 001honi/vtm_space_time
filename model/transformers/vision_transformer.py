@@ -274,7 +274,7 @@ class Block(nn.Module):
             self.temp_fc = Linear(n_bias_sets, additional_bias, dim, dim)
             self.ls0 = LayerScale(dim, init_values=init_values) if init_values else Identity()
             self.drop_path0 = DropPath(drop_path) if drop_path > 0. else Identity()
-
+            self.time_gate = nn.Parameter(torch.zeros(1,time_attn,dim))
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else Identity()
         self.norm2 = norm_layer(n_bias_sets, additional_bias, dim)
@@ -291,8 +291,13 @@ class Block(nn.Module):
             x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # Nx196x768 -> 196xNx768 ; B=T=1
             x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # 196xNx768 -> 1x392x768 ; B=T=1
             x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> 196xNx768 ; B=T=1
-            x = self.drop_path0(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
+            x_res = self.drop_path0(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
+            x_res = self.temp_fc(x_res, b_idx)
+            # Suppress time attn in early iterations by gating
+            # x_res = x_res * self.time_gate if x_res.shape[1] == self.time_gate.shape[1] else x_res * self.time_gate[:,0,:]
+            x = x + x_res
             # [Uncomment only one] ---------------------------------------------
+            # x = x + self.temp_fc(x, b_idx)
             x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
             # ------------------------------------------------------------------
             # Temporal FC (Type 0) (Old)
@@ -624,7 +629,7 @@ class VisionTransformer(nn.Module):
         if weight_init != 'skip':
             self.init_weights(weight_init)
 
-        # initialization of temporal attention weights (TimeSformer'21)
+        # initialization of temporal fc weights (TimeSformer'21)
         if time_attn:
             i = 0
             for m in self.blocks.modules():
@@ -1136,6 +1141,8 @@ def vit_base_patch16_224(pretrained=False, **kwargs):
     ImageNet-1k weights fine-tuned from in21k @ 224x224, source https://github.com/google-research/vision_transformer.
     """
     model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
+    if kwargs['img_size'] == 64:
+        model_kwargs = dict(patch_size=8, embed_dim=768, depth=12, num_heads=12, **kwargs)
     model = _create_vision_transformer('vit_base_patch16_224', pretrained=pretrained, **model_kwargs)
     return model
 

@@ -288,7 +288,8 @@ class Block(nn.Module):
             self.attn_t = Attention(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
             window_size=(time_attn-1,1), attn_head_dim=attn_head_dim, n_bias_sets=n_bias_sets, additional_bias=additional_bias, qkv_bitfit=qkv_bitfit)
-            # self.temp_fc = Linear(n_bias_sets, additional_bias, dim, dim)
+            self.temp_fc = Linear(n_bias_sets, additional_bias, dim, dim)
+            self.time_gate = nn.Parameter(torch.zeros(1,time_attn,dim))
         
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -311,7 +312,11 @@ class Block(nn.Module):
                 x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # Nx196x768 -> 196xNx768 ; B=T=1
                 x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # 196xNx768 -> 1x392x768 ; B=T=1
                 x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> 196xNx768 ; B=T=1
-                x = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
+                x_res = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
+                x_res = self.temp_fc(x_res, b_idx)
+                # Suppress time attn in early iterations by gating
+                # x_res = x_res * self.time_gate if x_res.shape[1] == self.time_gate.shape[1] else x_res * self.time_gate[:,0,:]
+                x = x + x_res
                 # [Uncomment only one] ---------------------------------------------
                 # x = x + self.temp_fc(x, b_idx)
                 x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
@@ -342,7 +347,11 @@ class Block(nn.Module):
                 x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # Nx196x768 -> 196xNx768 ; B=T=1
                 x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # 196xNx768 -> 1x392x768 ; B=T=1
                 x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> 196xNx768 ; B=T=1
-                x = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
+                x_res = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
+                x_res = self.temp_fc(x_res, b_idx)
+                # Suppress time attn in early iterations by gating
+                # x_res = x_res * self.time_gate if x_res.shape[1] == self.time_gate.shape[1] else x_res * self.time_gate[:,0,:]
+                x = x + x_res
                 # [Uncomment only one] ---------------------------------------------
                 # x = x + self.temp_fc(x, b_idx)
                 x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
@@ -446,16 +455,16 @@ class Beit(nn.Module):
             self.head.weight.data.mul_(head_init_scale)
             self.head.bias.data.mul_(head_init_scale)
 
-        # # initialization of temporal attention weights (TimeSformer'21)
-        # if time_attn:
-        #     i = 0
-        #     for m in self.blocks.modules():
-        #         m_str = str(m)
-        #         if 'Block' in m_str:
-        #             if i > 0:
-        #               nn.init.constant_(m.temp_fc.weight, 0)
-        #               nn.init.constant_(m.temp_fc.bias, 0)
-        #             i += 1
+        # initialization of temporal fc weights (TimeSformer'21)
+        if time_attn:
+            i = 0
+            for m in self.blocks.modules():
+                m_str = str(m)
+                if 'Block' in m_str:
+                    if i > 0:
+                      nn.init.constant_(m.temp_fc.weight, 0)
+                      nn.init.constant_(m.temp_fc.bias, 0)
+                    i += 1
 
         self.feature_blocks = [level * (len(self.blocks) // n_feature_levels) - 1 for level in range(1, n_feature_levels + 1)]
 
