@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional, Tuple, Dict, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.hub import load_state_dict_from_url
 from torch.utils.checkpoint import checkpoint
 
@@ -781,15 +782,22 @@ def flatten_modules(named_modules, depth=1, prefix='', module_types='sequential'
                     name = '.'.join([prefix, name])
                 yield name, module
 
-
 def custom_load_state_dict(model, state_dict, strict=True):
+
     if ('rel_pos_bias.relative_position_bias_table' in state_dict and
             hasattr(model, 'blocks')):
         # print("Expand the shared relative position embedding to each transformer block. ")
         rel_pos_bias = state_dict['rel_pos_bias.relative_position_bias_table']
         for i, block in enumerate(model.blocks):
             if hasattr(block, 'attn') and block.attn.relative_position_bias_table is not None:
-                state_dict[f'blocks.{i}.attn.relative_position_bias_table'] = rel_pos_bias.clone()
+                rel_pos_bias_model = f'blocks.{i}.attn.relative_position_bias_table'
+                state_dict[rel_pos_bias_model] = rel_pos_bias.clone()
+                # Resizing 
+                if state_dict[rel_pos_bias_model].shape != model.state_dict()[rel_pos_bias_model].shape:
+                    state_dict[rel_pos_bias_model] = resize_rel_pos_bias(
+                        state_dict[rel_pos_bias_model],
+                        model.state_dict()[rel_pos_bias_model].size(0)
+                        )
 
     for name, p in model.named_parameters():
         if (name[-4:] == 'bias' and
@@ -799,4 +807,102 @@ def custom_load_state_dict(model, state_dict, strict=True):
             assert state_dict[name].shape[0] == p.shape[1]
             state_dict[name] = repeat(state_dict[name], 'd -> T d', T=p.shape[0])
 
+        if 'patch_embed.proj.weight' in name:
+            if state_dict[name].shape[-2:] != p.shape[-2:]:
+                state_dict[name] = F.interpolate(state_dict[name], p.shape[-2:], mode='bicubic')
+
+        if 'pos_embed' in name:
+            state_dict[name] = resize_pos_embed(state_dict[name], p.size(1))
+
     model.load_state_dict(state_dict, strict=strict)
+
+# ==================================================================================
+# Resizing functions for various input size 
+
+def resize_pos_embed(posemb, ntok_new, num_prefix_tokens=1, gs_new=(), verbose=True, verbose_tag=''):
+    # Rescale the grid of position embeddings when loading from state_dict. Adapted from
+    # https://github.com/google-research/vision_transformer/blob/00883dd691c63a6830751563748663526e811cee/vit_jax/checkpoint.py#L224
+    if posemb.size(1) == ntok_new:
+        return posemb
+    
+    if num_prefix_tokens:
+        posemb_prefix, posemb_grid = posemb[:, :num_prefix_tokens], posemb[0, num_prefix_tokens:]
+        ntok_new -= num_prefix_tokens
+    else:
+        posemb_prefix, posemb_grid = posemb[:, :0], posemb[0]
+    gs_old = int(math.sqrt(len(posemb_grid)))
+    if not len(gs_new):  # backwards compatibility
+        gs_new = [int(math.sqrt(ntok_new))] * 2
+    assert len(gs_new) >= 2
+    if verbose:
+        print('Position embedding %s grid-size from %s to %s' % (verbose_tag, [gs_old, gs_old], gs_new))
+    posemb_grid = posemb_grid.reshape(1, gs_old, gs_old, -1).permute(0, 3, 1, 2)
+    cast = False
+    if posemb_grid.dtype != torch.float32:
+        dtype = posemb_grid.dtype
+        cast = True
+        posemb_grid = posemb_grid.float()
+    posemb_grid = F.interpolate(posemb_grid, size=gs_new, mode='bicubic', align_corners=False)
+    if cast:
+        posemb_grid = posemb_grid.to(dtype)
+    posemb_grid = posemb_grid.permute(0, 2, 3, 1).reshape(1, gs_new[0] * gs_new[1], -1)
+    posemb = torch.cat([posemb_prefix, posemb_grid], dim=1)
+    return posemb
+
+def resize_rel_pos_bias(rel_pos_bias, dst_num_pos, verbose=True, verbose_tag=''):
+    import numpy as np
+    from scipy import interpolate 
+    src_num_pos, num_attn_heads = rel_pos_bias.size()
+    num_extra_tokens = 3
+
+    src_size = int((src_num_pos - num_extra_tokens) ** 0.5)
+    dst_size = int((dst_num_pos - num_extra_tokens) ** 0.5)
+    if src_size != dst_size:
+        # if verbose:
+        #     print("Position interpolate for %s from %dx%d to %dx%d" % (
+        #     verbose_tag, src_size, src_size, dst_size, dst_size))
+        extra_tokens = rel_pos_bias[-num_extra_tokens:, :]
+        rel_pos_bias = rel_pos_bias[:-num_extra_tokens, :]
+
+        def geometric_progression(a, r, n):
+            return a * (1.0 - r ** n) / (1.0 - r)
+
+        left, right = 1.01, 1.5
+        while right - left > 1e-6:
+            q = (left + right) / 2.0
+            gp = geometric_progression(1, q, src_size // 2)
+            if gp > dst_size // 2:
+                right = q
+            else:
+                left = q
+
+        dis = []
+        cur = 1
+        for i in range(src_size // 2):
+            dis.append(cur)
+            cur += q ** (i + 1)
+
+        r_ids = [-_ for _ in reversed(dis)]
+
+        x = r_ids + [0] + dis
+        y = r_ids + [0] + dis
+
+        t = dst_size // 2.0
+        dx = np.arange(-t, t + 0.1, 1.0)
+        dy = np.arange(-t, t + 0.1, 1.0)
+
+        all_rel_pos_bias = []
+
+        for i in range(num_attn_heads):
+            z = rel_pos_bias[:, i].view(src_size, src_size).cpu().detach().float().numpy()
+            f = interpolate.interp2d(x, y, z, kind='cubic')
+            all_rel_pos_bias.append(
+                torch.Tensor(f(dx, dy)).contiguous().view(-1, 1).to(rel_pos_bias.device))
+
+        rel_pos_bias = torch.cat(all_rel_pos_bias, dim=-1)
+
+        new_rel_pos_bias = torch.cat((rel_pos_bias, extra_tokens), dim=0)
+    else:
+        new_rel_pos_bias = rel_pos_bias
+
+    return new_rel_pos_bias
