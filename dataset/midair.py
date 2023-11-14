@@ -428,20 +428,24 @@ class MidAirBaseTrainDataset(MidAirBaseDataset):
     
     def sample_files(self, domains, n_files):
         assert n_files % len(domains) == 0
-        sample_skip = self.sample_skip
         # sample image file indices for each domain
         file_idxs = np.array([], dtype=np.int64)
         for domain in domains:
             if self.sample_by_seq:
-                file_idx_max = self.domain_dict[domain][-1]
-                file_idx = file_idx_max; count = 0
-                while file_idx + (n_files-1)*sample_skip + 1 > file_idx_max:
-                    file_idx = np.random.choice(self.domain_dict[domain])
-                    count += 1
-                    if count > len(self.domain_dict[domain]): 
-                        sample_skip = sample_skip // 2 if sample_skip > 1 else 1
-                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*sample_skip + 1, 
-                                                                 sample_skip, dtype=np.int64)))
+                total_files = len(self.domain_dict[domain])
+                sample_skip = self.sample_skip; replace = False
+                # if 'total_files' in the domain is not enough reduce 'sample_skip' 
+                while n_files * sample_skip > total_files:
+                    if sample_skip == 1:
+                        replace = True; total_files = (n_files * sample_skip)
+                        break
+                    sample_skip = sample_skip // 2 
+                # create a random file_idx subset and sample by random choice again 
+                rand_index = np.random.choice(total_files - (n_files * sample_skip) + 1)
+                domain_file_idx_subset = self.domain_dict[domain][rand_index:rand_index+(n_files * sample_skip)]
+                file_idxs = np.concatenate((file_idxs, np.sort(
+                    np.random.choice(domain_file_idx_subset, n_files, replace=replace))
+                    ))
             else:
                 file_idxs = np.concatenate((file_idxs,
                                         np.random.choice(self.domain_dict[domain], 
@@ -596,21 +600,24 @@ class MidAirCategoricalTrainDataset(MidAirCategoricalDataset):
     
     def sample_files(self, c, domains, n_files):
         assert n_files % len(domains) == 0
-        sample_skip = self.sample_skip
         # sample image file indices for each domain
         file_idxs = np.array([], dtype=np.int64)
         for domain in domains:
             if self.sample_by_seq:
-                file_idx_max = self.domain_dict[c][domain][-1]
-                file_idx = file_idx_max
-                file_idx = file_idx_max; count = 0
-                while file_idx + (n_files-1)*sample_skip + 1 > file_idx_max:
-                    file_idx = np.random.choice(self.domain_dict[c][domain])
-                    count += 1
-                    if count > len(self.domain_dict[c][domain]): 
-                        sample_skip = sample_skip // 2 if sample_skip > 1 else 1
-                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*sample_skip + 1, 
-                                                                 sample_skip, dtype=np.int64)))
+                total_files = len(self.domain_dict[c][domain])
+                sample_skip = self.sample_skip; replace = False
+                # if 'total_files' in the domain is not enough reduce 'sample_skip' 
+                while n_files * sample_skip > total_files:
+                    if sample_skip == 1:
+                        replace = True; total_files = (n_files * sample_skip)
+                        break
+                    sample_skip = sample_skip // 2 
+                # create a random file_idx subset and sample by random choice again 
+                rand_index = np.random.choice(total_files - (n_files * sample_skip) + 1)
+                domain_file_idx_subset = self.domain_dict[c][domain][rand_index:rand_index+(n_files * sample_skip)]
+                file_idxs = np.concatenate((file_idxs, np.sort(
+                    np.random.choice(domain_file_idx_subset, n_files, replace=replace))
+                    ))
             else:
                 file_idxs = np.concatenate((file_idxs,
                                         np.random.choice(self.domain_dict[c][domain], 
@@ -675,21 +682,24 @@ class MidAirUnsupervisedTrainDataset(MidAirBaseDataset):
     
     def sample_files(self, domains, n_files):
         assert n_files % len(domains) == 0
-        self.sample_skip = sample_skip
         # sample image file indices for each domain
         file_idxs = np.array([], dtype=np.int64)
         for domain in domains:
             if self.sample_by_seq:
-                file_idx_max = self.domain_dict[domain][-1]
-                file_idx = file_idx_max
-                file_idx = file_idx_max; count = 0
-                while file_idx + (n_files-1)*sample_skip + 1 > file_idx_max:
-                    file_idx = np.random.choice(self.domain_dict[domain])
-                    count += 1 
-                    if count > len(self.domain_dict[domain]): 
-                        sample_skip = sample_skip // 2 if sample_skip > 1 else 1
-                file_idxs = np.concatenate((file_idxs, np.arange(file_idx, file_idx + (n_files-1)*sample_skip + 1, 
-                                                                 sample_skip, dtype=np.int64)))
+                total_files = len(self.domain_dict[domain])
+                sample_skip = self.sample_skip; replace = False
+                # if 'total_files' in the domain is not enough reduce 'sample_skip' 
+                while n_files * sample_skip > total_files:
+                    if sample_skip == 1:
+                        replace = True; total_files = (n_files * sample_skip)
+                        break
+                    sample_skip = sample_skip // 2 
+                # create a random file_idx subset and sample by random choice again 
+                rand_index = np.random.choice(total_files - (n_files * sample_skip) + 1)
+                domain_file_idx_subset = self.domain_dict[domain][rand_index:rand_index+(n_files * sample_skip)]
+                file_idxs = np.concatenate((file_idxs, np.sort(
+                    np.random.choice(domain_file_idx_subset, n_files, replace=replace))
+                    ))
             else:
                 file_idxs = np.concatenate((file_idxs,
                                         np.random.choice(self.domain_dict[domain], 
