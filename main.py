@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 import pytorch_lightning as pl
 import torch
 import warnings
@@ -20,7 +20,6 @@ if __name__ == "__main__":
 
     if not config.check_mode:
         # load model
-        # reduced = False #(config.stage > 0) if reduced is True load from .pth else .ckpt
         model, ckpt_path = load_model(config, verbose=IS_RANK_ZERO, reduced=(config.stage > 0))
 
         # environmental settings
@@ -32,6 +31,7 @@ if __name__ == "__main__":
 
     if IS_RANK_ZERO:
         print(f'''\
+        {config.save_dir}
         Running Stage {config.stage} with {config.strategy} Strategy:
         > Exp Name: {config.exp_name}
         > Model: {config.model}
@@ -45,6 +45,8 @@ if __name__ == "__main__":
             - Joint Embedding w/ Post Projection: {config.l2b_pre_projection}
         > Image Size: {config.img_size}
         > Global Batch Size: {config.global_batch_size}
+        > Shot Size: {config.shot}
+        > Time Attn: {config.time_attn}
         > Eval Batch Size: {config.eval_batch_size}
         > Max Channels: {config.max_channels}
         > Num Workers: {config.num_workers}
