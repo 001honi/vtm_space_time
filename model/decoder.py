@@ -341,6 +341,33 @@ class FeatureFusionBlock(nn.Module):
 
         return output
 
+class Attention(nn.Module):
+    def __init__(self, dim, num_heads=8, attn_drop=0., proj_drop=0.):
+        super().__init__()
+        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim ** -0.5
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim, bias=False)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x):
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
 
 class DPTDecoder(nn.Module):
     '''
@@ -354,6 +381,7 @@ class DPTDecoder(nn.Module):
             out_chans=1,
             n_fusion_layers=1,
             deconv_head=False,
+            time_attn = 0
         ):
         super().__init__()
         self.grid_size = grid_size
@@ -366,6 +394,7 @@ class DPTDecoder(nn.Module):
             raise NotImplementedError
         self.projectors = _make_projectors(hidden_features, out_features, n_levels=self.n_levels)
         self.fusion_blocks = _make_fusion_blocks(out_features, n_layers=n_fusion_layers, n_levels=self.n_levels)
+        self.time_attn = time_attn
 
         if self.n_levels == 4:
             if deconv_head:
@@ -398,20 +427,42 @@ class DPTDecoder(nn.Module):
                 nn.ReLU(True),
                 nn.Conv2d(64, out_chans, kernel_size=1, stride=1, padding=0),
             )
+
+        if time_attn:
+            self.time_attn_levels = nn.ModuleList([
+                Attention(dim=out_features) for _ in range(self.n_levels)
+            ])
+            self.time_fc = nn.Linear(out_features, out_features)
     
+    def time_parameters(self):
+        assert self.time_attn 
+        for module in self.time_attn_levels + [self.time_fc]:
+            for name, p in module.named_parameters():
+                yield name, p
+
     def forward(self, features):
         B, T, N = features[0].shape[:3]
+        h=hh=self.grid_size[0]; w=ww=self.grid_size[1]
         for level in range(self.n_levels - 1, -1, -1):
-            feat = rearrange(features[level], 'B T N (h w) d -> (B T N) d h w',
-                             h=self.grid_size[0], w=self.grid_size[1])
+            feat = rearrange(features[level], 'B T N (h w) d -> (B T N) d h w', h=h, w=w)
             feat = self.resamplers[level](feat)
             feat = self.projectors[level](feat)
             if level == self.n_levels - 1:
                 feat = self.fusion_blocks[level](feat)
             else:
                 feat = self.fusion_blocks[level](up_feat, feat)
+                hh = hh*2 ; ww = ww*2
+            
+            if self.time_attn:
+                feat = rearrange(feat, '(B T N) d h w -> B T N (h w) d', B=B, T=T, N=N)
+                feat = rearrange(feat, 'B T N (h w) d -> (B T h w) N d', h=hh, w=ww)
+                feat_res = self.time_attn_levels[level](feat) 
+                feat_res = self.time_fc(feat_res)
+                feat = feat + feat_res
+                feat = rearrange(feat, '(B T h w) N d -> (B T N) d h w', B=B,T=T,N=N,h=hh,w=ww)
             up_feat = feat
+
         out = self.head(feat)
-        out = rearrange(out, '(B T N) C H W -> B T N C H W', B=B, T=T, N=N)
+        out = rearrange(out, '(B T N) C h w -> B T N C h w', B=B, T=T, N=N)
 
         return out
