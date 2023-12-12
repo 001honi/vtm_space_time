@@ -299,8 +299,8 @@ def compute_episodic_loss(model, train_data, config, n_classes=None, pseudo_idxs
         X, Y, M, t_idx = train_data
     else:
         X, Y, M = train_data
-        if config.task == 'flow':
-            X, X2 = X
+        # if config.task == 'flow':
+        #     X, X2 = X
 
         # patch processing for loveda
         if config.task == 'semseg' and config.dataset == 'loveda':
@@ -323,17 +323,17 @@ def compute_episodic_loss(model, train_data, config, n_classes=None, pseudo_idxs
         Y = rearrange(Y, '(B N) T H W -> B T N 1 H W', B=1)
         M = rearrange(M, '(B N) T H W -> B T N 1 H W', B=1)
         t_idx = repeat(torch.tensor(list(range(Y.size(1))), device=X.device), 'T -> B T', B=len(X))
-        if config.task == 'flow':
-            X2 = repeat(X2, '(B N) C H W -> B T N C H W', B=1, T=Y.size(1))
+        # if config.task == 'flow':
+        #     X2 = repeat(X2, '(B N) C H W -> B T N C H W', B=1, T=Y.size(1))
 
     # split the batches into support and query
     X_S, X_Q = X.split(math.ceil(X.size(2) / 2), dim=2)
     Y_S, Y_Q = Y.split(math.ceil(Y.size(2) / 2), dim=2)
     M_S, M_Q = M.split(math.ceil(M.size(2) / 2), dim=2)
-    if config.task == 'flow':
-        X2_S, X2_Q = X2.split(math.ceil(X2.size(2) / 2), dim=2)
-        X_S = (X_S, X2_S)
-        X_Q = (X_Q, X2_Q)
+    # if config.task == 'flow':
+    #     X2_S, X2_Q = X2.split(math.ceil(X2.size(2) / 2), dim=2)
+    #     X_S = (X_S, X2_S)
+    #     X_Q = (X_Q, X2_Q)
 
     # ignore masked region in support label
     if config.task == 'depth' and config.dataset == 'eigen':
