@@ -11,6 +11,8 @@ from .downstream import DownstreamFinetuneDataset, DAVIS2017FinetuneDataset, Eig
     DownstreamUnsupervisedDataset
 
 base_sizes = {
+    128: (128, 128),  ### FOR FTUNE
+    # 128: (256, 256), #MIDAIR
     224: (256, 256),
     384: (448, 448),
     416: (480, 480),
@@ -148,6 +150,7 @@ def get_train_loader(config, pin_memory=True, verbose=True, get_support_data=Fal
                 img_size=(config.img_size, config.img_size),
                 precision=config.precision,
                 fix_seed=False,
+                sequential=True
             )
         else:
             specific_kwargs = {}
@@ -201,8 +204,8 @@ def get_train_loader(config, pin_memory=True, verbose=True, get_support_data=Fal
                 X = rearrange(X, 'B P C H W -> (B P) C H W')
                 Y = rearrange(Y, 'B P C H W -> (B P) C H W')
                 M = rearrange(M, 'B P C H W -> (B P) C H W')
-            elif config.dataset == 'kittiflow':
-                X, X2 = X
+            # elif config.dataset == 'kittiflow':
+            #     X, X2 = X
 
             assert X.ndim == 4
             assert Y.ndim == 4
@@ -210,16 +213,16 @@ def get_train_loader(config, pin_memory=True, verbose=True, get_support_data=Fal
             Y = rearrange(Y, '(B N) T H W -> B T N 1 H W', N=N)
             M = rearrange(M, '(B N) T H W -> B T N 1 H W', N=N)
             t_idx = repeat(torch.tensor(list(range(Y.size(1))), device=X.device), 'T -> B T', B=len(X))
-            if config.dataset == 'kittiflow':
-                X2 = repeat(X2, '(B N) C H W -> B T N C H W', N=N, T=Y.size(1))
-                X = (X, X2)
+            # if config.dataset == 'kittiflow':
+            #     X2 = repeat(X2, '(B N) C H W -> B T N C H W', N=N, T=Y.size(1))
+            #     X = (X, X2)
             support_data = X, Y, M, t_idx
 
             return support_data
         
     if return_dset:
         return train_data
-
+  
     # create training loader.
     train_loader = DataLoader(train_data, batch_size=(config.global_batch_size // torch.cuda.device_count()),
                               shuffle=False, pin_memory=pin_memory, persistent_workers=True,
@@ -262,6 +265,7 @@ def get_eval_loader(config, task, split='valid', channel_idx=-1, pin_memory=True
             if config.dataset == 'davis2017':
                 FinetuneDataset = DAVIS2017FinetuneDataset
                 specific_kwargs['permute_classes'] = config.permute_classes
+                specific_kwargs['n_vis_size'] = config.eval_batch_size
             elif config.dataset == 'isic2018':
                 FinetuneDataset = ISIC2018FinetuneDataset
             elif config.dataset == 'duts' and split == 'test':
