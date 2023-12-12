@@ -54,8 +54,9 @@ class LightningTrainWrapper(pl.LightningModule):
                     attn.attn_dropout.p = self.config.attn_dropout
 
         if self.config.dataset == 'davis2017':
-            n_classes = torch.load('dataset/meta_info/davis2017_n_objects.pth')
-            self.n_classes = n_classes[self.config.class_name]
+            # n_classes = torch.load('dataset/meta_info/davis2017_n_objects.pth')
+            # self.n_classes = n_classes[self.config.class_name]
+            self.n_classes = 1
         elif self.config.multichannel:
             if self.config.dataset == 'loveda':
                 self.n_classes = 7
@@ -245,8 +246,10 @@ class LightningTrainWrapper(pl.LightningModule):
 
         if self.config.dataset == 'loveda':
             X = rearrange(X, 'N P C H W -> (N P) C H W') # P is number of patches per image
-        elif self.config.task == 'flow':
-            X, X2 = X # X2 is the second image
+        # elif self.config.task == 'flow':
+        #     X, X2 = X # X2 is the second image
+
+        X_base_size = (X.size(-1), X.size(-1))
 
         if self.config.model == 'VTM':
             # support data
@@ -269,17 +272,17 @@ class LightningTrainWrapper(pl.LightningModule):
                 Y_S = torch.cat([Y_S, rearrange(Y_S_dynamic, 'N T H W -> 1 T N 1 H W')], dim=2)
                 M_S = torch.cat([M_S, rearrange(M_S_dynamic, 'N T H W -> 1 T N 1 H W')], dim=2)
 
-            # five-crop query images to 224 x 224 and reshape for matching
-            if X.shape[-2:] != (self.config.img_size, self.config.img_size):
-                X_crop = repeat(self.crop(X), 'F B C H W -> 1 T (F B) C H W', T=T)
-                if self.config.task == 'flow':
-                    X2_crop = repeat(self.crop(X2), 'F B C H W -> 1 T (F B) C H W', T=T)
-                    X_crop = (X_crop, X2_crop)
-            else:
-                X_crop = repeat(X, 'B C H W -> 1 T B C H W', T=T)
-                if self.config.task == 'flow':
-                    X2_crop = repeat(X2, 'B C H W -> 1 T B C H W', T=T)
-                    X_crop = (X_crop, X2_crop)
+            # # five-crop query images to 224 x 224 and reshape for matching
+            # if X.shape[-2:] != (self.config.img_size, self.config.img_size):
+            #     X_crop = repeat(self.crop(X), 'F B C H W -> 1 T (F B) C H W', T=T)
+            #     # if self.config.task == 'flow':
+            #     #     X2_crop = repeat(self.crop(X2), 'F B C H W -> 1 T (F B) C H W', T=T)
+            #     #     X_crop = (X_crop, X2_crop)
+            # else:
+            #     X_crop = repeat(X, 'B C H W -> 1 T B C H W', T=T)
+            #     # if self.config.task == 'flow':
+            #     #     X2_crop = repeat(X2, 'B C H W -> 1 T B C H W', T=T)
+            #     #     X_crop = (X_crop, X2_crop)
 
             if self.config.task == 'depth' and self.config.dataset == 'eigen':
                 M_S = (Y_S > 0)
@@ -287,54 +290,67 @@ class LightningTrainWrapper(pl.LightningModule):
             # predict labels on each crop
             Y_S_in = torch.where(M_S.bool(), Y_S, torch.ones_like(Y_S) * self.config.mask_value)
 
-            if T > 5:
-                assert self.config.task != 'flow'
-                Y_pred_crop = []
-                chunk_size = 2
-                for X_S_, Y_S_in_, X_crop_, t_idx_ in zip(X_S.split(chunk_size, dim=1),
-                                                          Y_S_in.split(chunk_size, dim=1),
-                                                          X_crop.split(chunk_size, dim=1),
-                                                          t_idx.split(chunk_size, dim=1)):
-                    Y_pred_crop_ = self.model(X_S_, Y_S_in_, X_crop_, t_idx=t_idx_, **kwargs)
-                    Y_pred_crop.append(Y_pred_crop_)
-                Y_pred_crop = torch.cat(Y_pred_crop, dim=1)
-            else:
-                Y_pred_crop = self.model(X_S, Y_S_in, X_crop, t_idx=t_idx, **kwargs)
+            if X_base_size != (self.config.img_size, self.config.img_size):
+                X = F.interpolate(X,(self.config.img_size, self.config.img_size))
+            X = repeat(X, 'B C H W -> 1 T B C H W', T=T)
+            Y_pred = self.model(X_S, Y_S_in, X, t_idx=t_idx, **kwargs)
 
-            if 'segment_semantic' not in task_name and task_name not in ['vos', 'pose_6d', 'ds', 'sod', 'semseg']:
-                if self.config.spatial_softmax_loss:
-                    H, W = Y_pred_crop.shape[-2:]
-                    Y_pred_crop = rearrange(Y_pred_crop, '1 T N C H W -> 1 T N C (H W)')
-                    Y_pred_crop = F.softmax(Y_pred_crop, dim=-1)
-                    Y_pred_crop = rearrange(Y_pred_crop, '1 T N C (H W) -> 1 T N C H W', H=H, W=W)
-                    Y_pred_crop = Y_pred_crop / (1e-18 + reduce(Y_pred_crop, '1 T N C H W -> 1 T N C 1 1', 'max'))
-                else:
-                    Y_pred_crop = Y_pred_crop.sigmoid()
+            Y_pred = rearrange(Y_pred, '1 T B 1 H W -> B T H W')
+            if X_base_size != (self.config.img_size, self.config.img_size):
+                Y_pred = F.interpolate(Y_pred, X_base_size)
 
-            # remix the cropped predictions into a whole prediction
-            if X.shape[-2:] != (self.config.img_size, self.config.img_size):
-                Y_pred_crop = rearrange(Y_pred_crop, '1 T (F B) 1 H W -> F B T H W', F=5)
-                if self.config.task == 'flow':
-                    Y_pred = mix_fivecrop(Y_pred_crop, base_size=X.size(-1), crop_size=X_crop[0].size(-1))
-                else:
-                    Y_pred = mix_fivecrop(Y_pred_crop, base_size=X.size(-1), crop_size=X_crop.size(-1))
-            else:
-                Y_pred = rearrange(Y_pred_crop, '1 T B 1 H W -> B T H W')
+            # =========================
+            # Disabled 5-Crop
+            # =========================
 
-        elif self.config.model == 'DPT':
-            if X.shape[-2:] != (self.config.img_size, self.config.img_size):
-                X_crop = rearrange(self.crop(X), 'F B C H W -> (F B) C H W')
-            else:
-                X_crop = X
-            Y_pred_crop = self.model(X_crop)
+            # if T > 5:
+            #     assert self.config.task != 'flow'
+            #     Y_pred_crop = []
+            #     chunk_size = 2
+            #     for X_S_, Y_S_in_, X_crop_, t_idx_ in zip(X_S.split(chunk_size, dim=1),
+            #                                               Y_S_in.split(chunk_size, dim=1),
+            #                                               X_crop.split(chunk_size, dim=1),
+            #                                               t_idx.split(chunk_size, dim=1)):
+            #         Y_pred_crop_ = self.model(X_S_, Y_S_in_, X_crop_, t_idx=t_idx_, **kwargs)
+            #         Y_pred_crop.append(Y_pred_crop_)
+            #     Y_pred_crop = torch.cat(Y_pred_crop, dim=1)
+            # else:
+            #     Y_pred_crop = self.model(X_S, Y_S_in, X_crop, t_idx=t_idx, **kwargs)
+
+            # if 'segment_semantic' not in task_name and task_name not in ['vos', 'pose_6d', 'ds', 'sod', 'semseg']:
+            #     if self.config.spatial_softmax_loss:
+            #         H, W = Y_pred_crop.shape[-2:]
+            #         Y_pred_crop = rearrange(Y_pred_crop, '1 T N C H W -> 1 T N C (H W)')
+            #         Y_pred_crop = F.softmax(Y_pred_crop, dim=-1)
+            #         Y_pred_crop = rearrange(Y_pred_crop, '1 T N C (H W) -> 1 T N C H W', H=H, W=W)
+            #         Y_pred_crop = Y_pred_crop / (1e-18 + reduce(Y_pred_crop, '1 T N C H W -> 1 T N C 1 1', 'max'))
+            #     else:
+            #         Y_pred_crop = Y_pred_crop.sigmoid()
+
+            # # remix the cropped predictions into a whole prediction
+            # if X.shape[-2:] != (self.config.img_size, self.config.img_size):
+            #     Y_pred_crop = rearrange(Y_pred_crop, '1 T (F B) 1 H W -> F B T H W', F=5)
+            #     if self.config.task == 'flow' and False: ### FLOW UPDATE
+            #         Y_pred = mix_fivecrop(Y_pred_crop, base_size=X.size(-1), crop_size=X_crop[0].size(-1))
+            #     else:
+            #         Y_pred = mix_fivecrop(Y_pred_crop, base_size=X.size(-1), crop_size=X_crop.size(-1))
+            # else:
+            #     Y_pred = rearrange(Y_pred_crop, '1 T B 1 H W -> B T H W')
+
+        # elif self.config.model == 'DPT':
+        #     if X.shape[-2:] != (self.config.img_size, self.config.img_size):
+        #         X_crop = rearrange(self.crop(X), 'F B C H W -> (F B) C H W')
+        #     else:
+        #         X_crop = X
+        #     Y_pred_crop = self.model(X_crop)
             
-            if X.shape[-2:] != (self.config.img_size, self.config.img_size):
-                Y_pred_crop = rearrange(Y_pred_crop, '(F B) T H W -> F B T H W', F=5)
-                if 'segment_semantic' not in task_name and task_name not in ['vos', 'pose_6d', 'ds']:
-                    Y_pred_crop = Y_pred_crop.sigmoid()
-                Y_pred = mix_fivecrop(Y_pred_crop, base_size=X.size(-1), crop_size=X_crop.size(-1))
-            else:
-                Y_pred_crop = Y_pred_crop.sigmoid()
+        #     if X.shape[-2:] != (self.config.img_size, self.config.img_size):
+        #         Y_pred_crop = rearrange(Y_pred_crop, '(F B) T H W -> F B T H W', F=5)
+        #         if 'segment_semantic' not in task_name and task_name not in ['vos', 'pose_6d', 'ds']:
+        #             Y_pred_crop = Y_pred_crop.sigmoid()
+        #         Y_pred = mix_fivecrop(Y_pred_crop, base_size=X.size(-1), crop_size=X_crop.size(-1))
+        #     else:
+        #         Y_pred_crop = Y_pred_crop.sigmoid()
 
         return Y_pred
     
@@ -392,9 +408,9 @@ class LightningTrainWrapper(pl.LightningModule):
         else:
             raise ValueError(f'Invalid batch: {len(batch)}')
 
+        X = X if task == 'flow' else X.float()
         # support data
-        Y_pred = self.inference(X.float(), task) # B T H W
-        # Y_pred = self.inference(X, task) # B T H W
+        Y_pred = self.inference(X, task) # B T H W
 
         # discretization for semantic segmentation
         if 'segment_semantic' in task_name or task_name in ['vos', 'ds', 'sod']:
@@ -421,8 +437,8 @@ class LightningTrainWrapper(pl.LightningModule):
             Y = convert_to_multiclass(Y, self.n_classes)
             Y_pred = convert_to_multiclass(Y_pred, self.n_classes)
             M = M[:, 0]
-        elif task == 'flow':
-            X, X2 = X
+        # elif task == 'flow':
+        #     X, X2 = X
 
         # compute evaluation metric
         if self.config.dataset == 'unified':
@@ -457,9 +473,9 @@ class LightningTrainWrapper(pl.LightningModule):
                 Y_pred_vis = F.interpolate(Y_pred_vis.float(), size=X_vis.shape[-2:], mode='nearest')
                 Y_vis = F.interpolate(Y_vis.float(), size=X_vis.shape[-2:], mode='nearest')
                 M_vis = F.interpolate(M_vis.float(), size=X_vis.shape[-2:], mode='nearest')
-            elif task == 'flow':
-                X2_vis = rearrange(self.all_gather(X2), 'G B ... -> (B G) ...')
-                X_vis = torch.cat([X_vis, X2_vis])
+            # elif task == 'flow':
+            #     X2_vis = rearrange(self.all_gather(X2), 'G B ... -> (B G) ...')
+            #     X_vis = torch.cat([X_vis, X2_vis])
 
             if self.config.dataset in ['rain100l', 'rain100h']:
                 vis_batch_diff = (X_vis, Y_vis, M_vis, Y_pred_vis)
@@ -1051,6 +1067,10 @@ class LightningTrainWrapper(pl.LightningModule):
             vis_tag = f'{self.valid_tag}/{self.config.dataset}_{task}'
         else:
             raise NotImplementedError
+        # PyTorch Lightning does not support to export grayscale images Tensorboard in DataParallel strategy training
+        # 'vis' has a shape of [N,256,256] we convert into [N,3,256,256] images to prevent the error 
+        # vis = torch.stack([img.unsqueeze(0).repeat(3,1,1) for img in vis])
+        # vis = torch.stack([img.unsqueeze(0) for img in vis])
         self.logger.experiment.add_image(vis_tag, vis, self.global_step)
 
     def on_fit_end(self):
