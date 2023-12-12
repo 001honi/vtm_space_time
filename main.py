@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="3"
 import pytorch_lightning as pl
 import torch
 import warnings
@@ -12,7 +12,7 @@ if __name__ == "__main__":
     torch.set_num_threads(1)
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=pl.utilities.warnings.PossibleUserWarning)
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
     IS_RANK_ZERO = int(os.environ.get('LOCAL_RANK', 0)) == 0
     
     # parse args
@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     if IS_RANK_ZERO:
         print(f'''\
-        {config.save_dir}
+        {config.log_dir}
         Running Stage {config.stage} with {config.strategy} Strategy:
         > Exp Name: {config.exp_name}
         > Model: {config.model}
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         )
 
         # validation at start
-        if config.stage == 1:
+        if config.stage == 1 or config.base_validation:
             trainer.validate(model, verbose=False)
             
         # start training or fine-tuning or domain adaptation
