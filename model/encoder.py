@@ -58,8 +58,18 @@ class ViTEncoder(nn.Module):
             if name[-5:] == 'bias2':
                 names.append(f'backbone.{name}')
         return names
-        
-    def forward(self, x, t_idx=None):
+
+    def time_parameters(self):
+        for name, p in self.backbone.named_parameters():
+            if (name.find('time')    != -1 or
+                name.find('attn_t')  != -1 or
+                name.find('norm0')   != -1 or 
+                name.find('ls0')     != -1 or
+                name.find('gamma_0') != -1):
+                
+                yield name, p
+            
+    def forward(self, x, t_idx=None, shared_time_embed=None):
         '''
         [input]
             x: (B, T, N, C, H, W)
@@ -79,7 +89,7 @@ class ViTEncoder(nn.Module):
             else:
                 t_idx = repeat(t_idx, 'B T -> (B T N)', N=N)
 
-        features = self.backbone.forward_features(x, b_idx=t_idx, feature_idxs=self.feature_idxs, vtm_shape=vtm_shape)
+        features = self.backbone.forward_features(x, b_idx=t_idx, feature_idxs=self.feature_idxs, vtm_shape=vtm_shape, shared_time_embed=shared_time_embed)
         features = [rearrange(feat, '(B T N) n d -> B T N n d', B=B, T=T, N=N) for feat in features]
 
         return features

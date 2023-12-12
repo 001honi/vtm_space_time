@@ -16,8 +16,13 @@ def get_optimizer(config, model):
     
     # train all parameters for episodic training
     if config.stage == 0:
-        learnable_params.append({'params': model.pretrained_parameters(), 'lr': config.lr_pretrained})
-        learnable_params.append({'params': model.scratch_parameters(), 'lr': config.lr})
+        if config.train_only_time_param:
+            learnable_params.append(({'params': model.time_parameters(), 'lr': config.lr}))
+        elif config.train_only_label_decoder:
+            learnable_params.append(({'params': model.label_decoder_parameters(), 'lr': config.lr}))
+        else:
+            learnable_params.append({'params': model.pretrained_parameters(), 'lr': config.lr_pretrained})
+            learnable_params.append({'params': model.scratch_parameters(), 'lr': config.lr})
 
     # train only task-specific parameters for fine-tuning
     elif config.stage == 1:

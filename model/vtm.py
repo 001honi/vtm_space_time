@@ -16,6 +16,11 @@ class VTM(nn.Module):
     '''
     def __init__(self, config, n_tasks):
         super().__init__()
+        if config.time_attn:
+            self.time_embed = nn.Parameter(torch.zeros(1, config.time_attn, 768))
+        else:
+            self.time_embed = None
+
         self.image_encoder = ViTEncoder(config.image_encoder, pretrained=(config.stage == 0 and
                                                                           not (config.continue_mode or
                                                                                config.resolution_finetune_mode)),
@@ -25,21 +30,26 @@ class VTM(nn.Module):
                                         additional_bias=getattr(config, 'additional_bias', False),
                                         time_attn=config.time_attn,
                                         img_size=config.img_size)
+        
         self.label_encoder = ViTEncoder(config.label_encoder, pretrained=False, in_chans=1, n_bias_sets=0,
                                         n_levels=config.n_levels,
                                         drop_path_rate=config.label_encoder_drop_path_rate,
                                         time_attn=config.time_attn,
                                         img_size=config.img_size)
+
         self.matching_module = MatchingModule(self.image_encoder.backbone.embed_dim,
                                               self.label_encoder.backbone.embed_dim,
                                               config.n_attn_heads, n_levels=config.n_levels)
+        
         self.label_decoder = DPTDecoder(self.label_encoder.grid_size, self.label_encoder.backbone.embed_dim,
                                         hidden_features=[min(config.decoder_features*(2**i), 1024)
                                                          if config.n_levels == 4
                                                          else min(config.decoder_features*(2**(i//2)), 1024)
                                                          for i in range(config.n_levels)],
-                                        deconv_head=config.deconv_head)
-
+                                        deconv_head=config.deconv_head,
+                                        time_attn=config.time_attn)
+        
+        
     def bias_parameters(self):
         # bias parameters for similarity adaptation
         for p in self.image_encoder.bias_parameters():
@@ -72,9 +82,25 @@ class VTM(nn.Module):
             for p in module.parameters():
                 yield p
 
+    def label_decoder_parameters(self):
+        modules = [
+            self.label_decoder.resamplers,
+            self.label_decoder.projectors,
+            self.label_decoder.fusion_blocks,
+            self.label_decoder.head
+        ]
+        for module in modules:
+            for p in module.parameters():
+                yield p
+    
+    def time_parameters(self):
+        modules = [self.image_encoder, self.label_encoder, self.label_decoder]; i=0
+        for module in modules:
+            for name, p in module.time_parameters():
+                # print(i, name); i+=1
+                yield p 
+
     def forward(self, X_S, Y_S, X_Q, t_idx=None):
-        # self.image_encoder.time_attn = False
-        # self.label_encoder.time_attn = False
         # encode query input, support input and output
         if isinstance(X_S, tuple):
             X_S1, X_S2 = X_S
@@ -82,10 +108,10 @@ class VTM(nn.Module):
             W_Qs = self.image_encoder(X_Q1, t_idx), self.image_encoder(X_Q2, t_idx)
             W_Ss = self.image_encoder(X_S1, t_idx), self.image_encoder(X_S2, t_idx)
         else:
-            W_Qs = self.image_encoder(X_Q.float(), t_idx)
-            W_Ss = self.image_encoder(X_S.float(), t_idx)
+            W_Qs = self.image_encoder(X_Q.float(), t_idx, shared_time_embed=self.time_embed)
+            W_Ss = self.image_encoder(X_S.float(), t_idx, shared_time_embed=self.time_embed)
 
-        Z_Ss = self.label_encoder(Y_S.float())
+        Z_Ss = self.label_encoder(Y_S.float(),shared_time_embed=self.time_embed)
 
         # mix support output by matching
         Z_Q_preds = self.matching_module(W_Qs, W_Ss, Z_Ss)
@@ -150,7 +176,7 @@ def get_model(config, verbose=False):
                 elif config.task == 'derain':
                     n_tasks = 3
                 elif config.task == 'semseg':
-                    n_tasks = 7
+                    n_tasks = 1
                 elif config.task == 'animalkp':
                     n_tasks = 17    
                 else:
