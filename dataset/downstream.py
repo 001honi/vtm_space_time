@@ -45,6 +45,8 @@ class DownstreamBaseDataset(Dataset):
             self.data_idxs = self.data_idxs[self.idxs_perm]
         
         self.toten = ToTensor()
+
+        self.getitem_counter = 0
         
     def __len__(self):
         return len(self.data_idxs)
@@ -82,15 +84,19 @@ class DownstreamBaseDataset(Dataset):
         return X, Y
 
     def __getitem__(self, idx):
-        img_path = self.data_idxs[idx % len(self.data_idxs)]
+        self.getitem_counter = 0 if self.getitem_counter >= len(self.data_idxs) else self.getitem_counter
+        if self.split == 'valid':
+            self.getitem_counter = idx % len(self.data_idxs)
+        img_path = self.data_idxs[self.getitem_counter]
+        # img_path = self.data_idxs[idx % len(self.data_idxs)]
         image, label = self.load_data(img_path)
-        
+        self.getitem_counter += 1
         return self.postprocess_data(image, label)
     
     
 class DownstreamFinetuneDataset(DownstreamBaseDataset):
     def __init__(self, split, shot, support_idx, channel_idx, dset_size,
-                 base_size, img_size, fix_seed=False, train_files=False, sequential=False, **kwargs):
+                 base_size, img_size, fix_seed=False, train_files=False, sequential=False, n_vis_size=10, **kwargs):
         super().__init__(base_size=base_size, **kwargs)
         assert split in ['train', 'valid', 'test']
         self.split = split
@@ -113,23 +119,29 @@ class DownstreamFinetuneDataset(DownstreamBaseDataset):
                 self.data_idxs = [data_idx for data_idx in self.data_idxs
                                 if data_idx not in train_files]
             self.data_idxs = np.array(self.data_idxs)
-        if self.dset_size < 0:
+        if self.dset_size < 0:  # FIXME  
             self.dset_size = len(self.data_idxs)
 
         train_idxs, valid_idxs, test_idxs = self.split_idxs(not self.shuffle_idxs,
                                                             test_all=(train_files is not None and
                                                                       (split == 'test')))
-        if sequential and split == 'valid' and len(valid_idxs) > 10:
-            n_vis = 10
-            valid_idxs_reordered = []
-            vis_idxs = torch.linspace(min(valid_idxs), max(valid_idxs), n_vis).round().long().tolist()
-            vis_idxs = [min(valid_idxs, key=lambda x:abs(x-vis_idx)) for vis_idx in vis_idxs]
-            for i in vis_idxs:
-                valid_idxs_reordered.append(i)
-            for i in valid_idxs:
-                if i not in vis_idxs:
-                    valid_idxs_reordered.append(i)
-            valid_idxs = valid_idxs_reordered
+        # shot-2 val-12
+        # train_idxs = [0,49]
+        # valid_idxs = list(range(1,48,4))
+
+        if sequential and split == 'valid' and len(valid_idxs) > n_vis_size:
+            # Temp FIX Valid idxs includes train idx for shot > 1
+            valid_idxs = test_idxs
+            # n_vis = n_vis_size
+            # valid_idxs_reordered = []
+            # vis_idxs = torch.linspace(min(valid_idxs), max(valid_idxs), n_vis).round().long().tolist()
+            # vis_idxs = [min(valid_idxs, key=lambda x:abs(x-vis_idx)) for vis_idx in vis_idxs]
+            # for i in vis_idxs:
+            #     valid_idxs_reordered.append(i)
+            # for i in valid_idxs:
+            #     if i not in vis_idxs:
+            #         valid_idxs_reordered.append(i)
+            # valid_idxs = valid_idxs_reordered
 
         if split == 'train':
             self.data_idxs = self.data_idxs[train_idxs]
@@ -137,6 +149,9 @@ class DownstreamFinetuneDataset(DownstreamBaseDataset):
             self.data_idxs = self.data_idxs[valid_idxs]
         else:
             self.data_idxs = self.data_idxs[test_idxs]
+
+        if split != 'train': # update number of data for validation
+            self.dset_size = len(self.data_idxs) # FIXME
         
     def __len__(self):
         return self.dset_size
@@ -152,7 +167,7 @@ class DownstreamFinetuneDataset(DownstreamBaseDataset):
             train_idxs = [0]
             for i in range(1, shot - 1):
                 train_idxs.append((N // (shot - 1)) * i)
-            if shot > 1:
+            if shot > 1:  
                 train_idxs.append(N - 1)
             assert len(train_idxs) == shot
             
@@ -165,7 +180,7 @@ class DownstreamFinetuneDataset(DownstreamBaseDataset):
 
             test_idxs = []
             for i in range(N):
-                if (i not in train_idxs):
+                if (i not in train_idxs + [N-1]): # Have same validation for 1-shot and 2-shot
                     test_idxs.append(i)
         else:
             offset = self.support_idx*self.shot
@@ -210,7 +225,8 @@ class DAVIS2017FinetuneDataset(DownstreamFinetuneDataset):
 
     def postprocess_data(self, image, label):
         X, Y = super(DownstreamFinetuneDataset, self).postprocess_data(image, label)
-        Y = (Y*255).long()
+        Y = (Y).long()
+        # Y = (Y*255).long()
 
         # permute_classes class indices
         if self.permute_classes:

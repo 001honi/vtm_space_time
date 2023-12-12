@@ -234,6 +234,7 @@ class UnifiedTrainDataset(Unified):
             dataset_idx = self.unsupervised_dataset_sampler.sample().item()
             dataset = self.unsupervised_datasets[dataset_idx]
 
+        # dataset.sample_skip = 8*(1+torch.randint(4,(1,))[0].item())
         # sample episode
         X, Y, M, t_idx = dataset.sample_episode(n_files=self.shot, n_domains=2)
         
