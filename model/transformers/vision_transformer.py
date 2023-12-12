@@ -271,10 +271,11 @@ class Block(nn.Module):
         if time_attn:
             self.norm0 = norm_layer(n_bias_sets, additional_bias, dim)
             self.attn_t = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, n_bias_sets=n_bias_sets, additional_bias=additional_bias)
-            self.temp_fc = Linear(n_bias_sets, additional_bias, dim, dim)
+            self.time_fc = Linear(n_bias_sets, additional_bias, dim, dim)
             self.ls0 = LayerScale(dim, init_values=init_values) if init_values else Identity()
             self.drop_path0 = DropPath(drop_path) if drop_path > 0. else Identity()
-            self.time_gate = nn.Parameter(torch.zeros(1,time_attn,dim))
+            # self.time_gate = nn.Parameter(torch.zeros(1,time_attn,dim))
+            # self.space_gate = nn.Parameter(torch.zeros(1,65,dim))
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else Identity()
         self.norm2 = norm_layer(n_bias_sets, additional_bias, dim)
@@ -287,41 +288,39 @@ class Block(nn.Module):
     def forward(self, x, b_idx=None, T=0, interaction_mask=None, vtm_shape=None):
         if self.time_attn:
             B,T,N,C,H,W = vtm_shape
-            x = x[:, 1:] # Nx196x768 ; B=T=1
-            x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # Nx196x768 -> 196xNx768 ; B=T=1
-            x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # 196xNx768 -> 1x392x768 ; B=T=1
-            x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> 196xNx768 ; B=T=1
-            x_res = self.drop_path0(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
-            x_res = self.temp_fc(x_res, b_idx)
-            # Suppress time attn in early iterations by gating
+            cls_token = x[:,0,:].unsqueeze(1)
+            x = x[:, 1:] # NxHWxD ; B=T=1
+            x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # NxHWxD -> HWxNxD ; B=T=1
+            x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # HWxNxD -> 1xHWNxD ; B=T=1
+            x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1xHWNxD -> HWxNxD ; B=T=1
+            x_res = self.drop_path0(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # HWxNxD ; B=T=1
+            x_res = self.time_fc(x_res, b_idx)
             # x_res = x_res * self.time_gate if x_res.shape[1] == self.time_gate.shape[1] else x_res * self.time_gate[:,0,:]
             x = x + x_res
-            # [Uncomment only one] ---------------------------------------------
-            # x = x + self.temp_fc(x, b_idx)
-            x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
-            # ------------------------------------------------------------------
-            # Temporal FC (Type 0) (Old)
-            # x = rearrange(x, '(B T H W) N d -> (B T) (H W N) d',B=B,T=T,N=N,H=H,W=W) # 196xNx768 -> 1x392x768 ; B=T=1
-            # x = x + self.temp_fc(x, b_idx)
-            # x = rearrange(x, '(B T) (H W N) d -> (B T N) (H W) d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> Nx196x768 ; B=T=1
-            # ------------------------------------------------------------------
-            # Temporal FC (Type I)
-            # x = x + self.temp_fc(x, b_idx) # 196xNx768 ; B=T=1
-            # x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
-            # ------------------------------------------------------------------
-            # Temporal FC (Type II)
-            # x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
-            # x = x + self.temp_fc(x, b_idx)
-            init_cls_token = x[:,0,:].unsqueeze(1)
-            cls_token = init_cls_token.repeat(1, 1, 1)
-            x = torch.cat((cls_token, x), dim=1)
-
-        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x, b_idx), b_idx)))
+            x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # HWxNxD -> NxHWxD ; B=T=1 
+            x = torch.cat((cls_token.repeat(1, 1, 1), x), dim=1)
+        
+        x_res = self.drop_path1(self.ls1(self.attn(self.norm1(x, b_idx), b_idx)))
+        x = x + x_res
         x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x, b_idx), b_idx)))
         if self.post_block:
             x = self.post_block(x, b_idx, T, interaction_mask)
-        return x
 
+        # if self.time_attn:
+        #     B,T,N,C,H,W = vtm_shape
+        #     cls_token = x[:,0,:].unsqueeze(1)
+        #     x = x[:, 1:] # NxHWxD ; B=T=1
+        #     x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # NxHWxD -> HWxNxD ; B=T=1
+        #     x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # HWxNxD -> 1xHWNxD ; B=T=1
+        #     x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1xHWNxD -> HWxNxD ; B=T=1
+        #     x_res = self.drop_path0(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # HWxNxD ; B=T=1
+        #     x_res = self.time_fc(x_res, b_idx)
+        #     # x_res = x_res * self.time_gate if x_res.shape[1] == self.time_gate.shape[1] else x_res * self.time_gate[:,0,:]
+        #     x = x + x_res
+        #     x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # HWxNxD -> NxHWxD ; B=T=1 
+        #     x = torch.cat((cls_token.repeat(1, 1, 1), x), dim=1)
+
+        return x
 
 class ResPostBlock(nn.Module):
 
@@ -636,8 +635,8 @@ class VisionTransformer(nn.Module):
                 m_str = str(m)
                 if 'Block' in m_str:
                     if i > 0:
-                      nn.init.constant_(m.temp_fc.weight, 0)
-                      nn.init.constant_(m.temp_fc.bias, 0)
+                      nn.init.constant_(m.time_fc.weight, 0)
+                      nn.init.constant_(m.time_fc.bias, 0)
                     i += 1
 
 
@@ -698,7 +697,7 @@ class VisionTransformer(nn.Module):
             x = x + self.pos_embed
         return self.pos_drop(x)
 
-    def forward_features(self, x, b_idx=None, feature_idxs=None, vtm_shape=None):
+    def forward_features(self, x, b_idx=None, feature_idxs=None, vtm_shape=None, shared_time_embed=None):
         x = self.patch_embed(x)
         x = self._pos_embed(x)
 
@@ -716,6 +715,14 @@ class VisionTransformer(nn.Module):
                     size=(x.shape[1]), mode='nearest').transpose(1, 2)
             else:
                 x = x + self.time_embed
+
+            # # SHARED EMBED
+            # if x.shape[1] != shared_time_embed.shape[1]:
+            #     x = x + F.interpolate(shared_time_embed.transpose(1,2),
+            #         size=(x.shape[1]), mode='nearest').transpose(1, 2)
+            # else:
+            #     x = x + shared_time_embed
+
             x = self.time_drop(x)
 
             x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 

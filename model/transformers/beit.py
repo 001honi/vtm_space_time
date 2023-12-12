@@ -139,8 +139,12 @@ def gen_relative_position_index(window_size: Tuple[int, int]) -> torch.Tensor:
     relative_coords[:, :, 0] += window_size[0] - 1  # shift to start from 0
     relative_coords[:, :, 1] += window_size[1] - 1
     relative_coords[:, :, 0] *= 2 * window_size[1] - 1
-    relative_position_index = torch.zeros(size=(window_area + 1,) * 2, dtype=relative_coords.dtype)
-    relative_position_index[1:, 1:] = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+    if window_size[1] == 1:
+        relative_position_index = torch.zeros(size=(window_area,) * 2, dtype=relative_coords.dtype)
+        relative_position_index[:, :] = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+    else:
+        relative_position_index = torch.zeros(size=(window_area + 1,) * 2, dtype=relative_coords.dtype)
+        relative_position_index[1:, 1:] = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
     relative_position_index[0, 0:] = num_relative_distance - 3
     relative_position_index[0:, 0] = num_relative_distance - 2
     relative_position_index[0, 0] = num_relative_distance - 1
@@ -184,11 +188,16 @@ class Attention(nn.Module):
         self.n_bias_sets = n_bias_sets
         self.qkv_bitfit = qkv_bitfit
 
-        if window_size:
+        if window_size and window_size[1] != 1:
             self.window_size = window_size
             self.num_relative_distance = (2 * window_size[0] - 1) * (2 * window_size[1] - 1) + 3
-            self.relative_position_bias_table = nn.Parameter(
-                torch.zeros(self.num_relative_distance, num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+            if window_size[1] == 1: # parameters does not update if init by all zeros
+                torch.manual_seed(0)
+                self.relative_position_bias_table = nn.Parameter(
+                    torch.zeros(self.num_relative_distance, num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+            else:
+                self.relative_position_bias_table = nn.Parameter(
+                    torch.zeros(self.num_relative_distance, num_heads))  # 2*Wh-1 * 2*Ww-1, nH
             self.register_buffer("relative_position_index", gen_relative_position_index(window_size))
         else:
             self.window_size = None
@@ -200,10 +209,16 @@ class Attention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def _get_rel_pos_bias(self):
-        relative_position_bias = self.relative_position_bias_table[
-            self.relative_position_index.view(-1)].view(
-            self.window_size[0] * self.window_size[1] + 1,
-            self.window_size[0] * self.window_size[1] + 1, -1)  # Wh*Ww,Wh*Ww,nH
+        if self.window_size[1] == 1:
+            relative_position_bias = self.relative_position_bias_table[
+                self.relative_position_index.view(-1)].view(
+                self.window_size[0],
+                self.window_size[0], -1)  # Wh*Ww,Wh*Ww,nH
+        else:
+            relative_position_bias = self.relative_position_bias_table[
+                self.relative_position_index.view(-1)].view(
+                self.window_size[0] * self.window_size[1] + 1,
+                self.window_size[0] * self.window_size[1] + 1, -1)  # Wh*Ww,Wh*Ww,nH
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
         return relative_position_bias.unsqueeze(0)
 
@@ -253,9 +268,12 @@ class Attention(nn.Module):
         attn = (q @ k.transpose(-2, -1))
 
         if self.relative_position_bias_table is not None:
-            if attn.shape[-1] == self._get_rel_pos_bias().shape[-1]: #FIXME 5-Crop interpolation
-                # if self._get_rel_pos_bias().shape[-1] != 2:
-                attn = attn + self._get_rel_pos_bias()
+            rel_pos_bias = self._get_rel_pos_bias()
+            if attn.shape[-1] == rel_pos_bias.shape[-1]:  
+                attn = attn + rel_pos_bias
+            # else:
+            #     rel_pos_bias = F.interpolate(rel_pos_bias, attn.shape[-2:], mode='nearest')
+            #     attn = attn + rel_pos_bias
         if shared_rel_pos_bias is not None:
             attn = attn + shared_rel_pos_bias
 
@@ -287,9 +305,10 @@ class Block(nn.Module):
             self.norm0 = norm_layer(n_bias_sets, additional_bias, dim)
             self.attn_t = Attention(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
-            window_size=(time_attn-1,1), attn_head_dim=attn_head_dim, n_bias_sets=n_bias_sets, additional_bias=additional_bias, qkv_bitfit=qkv_bitfit)
-            self.temp_fc = Linear(n_bias_sets, additional_bias, dim, dim)
-            self.time_gate = nn.Parameter(torch.zeros(1,time_attn,dim))
+            window_size=(time_attn,1), attn_head_dim=attn_head_dim, n_bias_sets=n_bias_sets, additional_bias=additional_bias, qkv_bitfit=qkv_bitfit)
+            self.time_fc = Linear(n_bias_sets, additional_bias, dim, dim)
+            # self.time_gate = nn.Parameter(torch.zeros(1,time_attn,dim))
+            # self.space_gate = nn.Parameter(torch.zeros(1,65,dim))
         
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -306,74 +325,56 @@ class Block(nn.Module):
 
     def forward(self, x, shared_rel_pos_bias: Optional[torch.Tensor] = None, b_idx=None, vtm_shape=None):
         if self.gamma_1 is None:
-            if self.time_attn:
-                B,T,N,C,H,W = vtm_shape
-                x = x[:, 1:] # Nx196x768 ; B=T=1
-                x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # Nx196x768 -> 196xNx768 ; B=T=1
-                x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # 196xNx768 -> 1x392x768 ; B=T=1
-                x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> 196xNx768 ; B=T=1
-                x_res = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
-                x_res = self.temp_fc(x_res, b_idx)
-                # Suppress time attn in early iterations by gating
-                # x_res = x_res * self.time_gate if x_res.shape[1] == self.time_gate.shape[1] else x_res * self.time_gate[:,0,:]
-                x = x + x_res
-                # [Uncomment only one] ---------------------------------------------
-                # x = x + self.temp_fc(x, b_idx)
-                x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
-                # ------------------------------------------------------------------
-                # Temporal FC (Type 0) (Old)
-                # x = rearrange(x, '(B T H W) N d -> (B T) (H W N) d',B=B,T=T,N=N,H=H,W=W) # 196xNx768 -> 1x392x768 ; B=T=1
-                # x = x + self.temp_fc(x, b_idx)
-                # x = rearrange(x, '(B T) (H W N) d -> (B T N) (H W) d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> Nx196x768 ; B=T=1
-                # ------------------------------------------------------------------
-                # Temporal FC (Type I)
-                # x = x + self.temp_fc(x, b_idx) # 196xNx768 ; B=T=1
-                # x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
-                # ------------------------------------------------------------------
-                # Temporal FC (Type II)
-                # x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
-                # x = x + self.temp_fc(x, b_idx)
-                init_cls_token = x[:,0,:].unsqueeze(1)
-                cls_token = init_cls_token.repeat(1, 1, 1)
-                x = torch.cat((cls_token, x), dim=1)
+            pass
+            # if self.time_attn:
+            #     B,T,N,C,H,W = vtm_shape
+            #     cls_token = x[:,0,:].unsqueeze(1)
+            #     x = x[:, 1:] # NxHWxD ; B=T=1
+            #     x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # NxHWxD -> HWxNxD ; B=T=1
+            #     x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # HWxNxD -> 1xHWNxD ; B=T=1
+            #     x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1xHWNxD -> HWxNxD ; B=T=1
+            #     x_res = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # HWxNxD ; B=T=1
+            #     # x_res = self.time_fc(x_res, b_idx)
+            #     # x_res = x_res * self.time_gate if x_res.shape[1] == self.time_gate.shape[1] else x_res * self.time_gate[:,0,:]
+            #     x = x + x_res
+            #     x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # HWxNxD -> NxHWxD ; B=T=1 
+            #     x = torch.cat((cls_token.repeat(1, 1, 1), x), dim=1)
 
-            x = x + self.drop_path(self.attn(self.norm1(x, b_idx), shared_rel_pos_bias=shared_rel_pos_bias, b_idx=b_idx))
-            x = x + self.drop_path(self.mlp(self.norm2(x, b_idx), b_idx))
+            # x = x + self.drop_path(self.attn(self.norm1(x, b_idx), shared_rel_pos_bias=shared_rel_pos_bias, b_idx=b_idx))
+            # x = x + self.drop_path(self.mlp(self.norm2(x, b_idx), b_idx))
        
         else:
             if self.time_attn:
                 B,T,N,C,H,W = vtm_shape
-                x = x[:, 1:] # Nx196x768 ; B=T=1
-                x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # Nx196x768 -> 196xNx768 ; B=T=1
-                x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # 196xNx768 -> 1x392x768 ; B=T=1
-                x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> 196xNx768 ; B=T=1
-                x_res = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # 196xNx768 ; B=T=1
-                x_res = self.temp_fc(x_res, b_idx)
-                # Suppress time attn in early iterations by gating
+                cls_token = x[:,0,:].unsqueeze(1)
+                x = x[:, 1:] # NxHWxD ; B=T=1
+                x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # NxHWxD -> HWxNxD ; B=T=1
+                x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # HWxNxD -> 1xHWNxD ; B=T=1
+                x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1xHWNxD -> HWxNxD ; B=T=1
+                x_res = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # HWxNxD ; B=T=1
+                x_res = self.time_fc(x_res, b_idx)
                 # x_res = x_res * self.time_gate if x_res.shape[1] == self.time_gate.shape[1] else x_res * self.time_gate[:,0,:]
                 x = x + x_res
-                # [Uncomment only one] ---------------------------------------------
-                # x = x + self.temp_fc(x, b_idx)
-                x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
-                # ------------------------------------------------------------------
-                # Temporal FC (Type 0) (Old)
-                # x = rearrange(x, '(B T H W) N d -> (B T) (H W N) d',B=B,T=T,N=N,H=H,W=W) # 196xNx768 -> 1x392x768 ; B=T=1
-                # x = x + self.temp_fc(x, b_idx)
-                # x = rearrange(x, '(B T) (H W N) d -> (B T N) (H W) d',B=B,T=T,N=N,H=H,W=W) # 1x392x768 -> Nx196x768 ; B=T=1
-                # ------------------------------------------------------------------
-                # Temporal FC (Type I)
-                # x = x + self.temp_fc(x, b_idx) # 196xNx768 ; B=T=1
-                # x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
-                # ------------------------------------------------------------------
-                # Temporal FC (Type II)
-                # x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
-                # x = x + self.temp_fc(x, b_idx)
-                init_cls_token = x[:,0,:].unsqueeze(1)
-                cls_token = init_cls_token.repeat(1, 1, 1)
-                x = torch.cat((cls_token, x), dim=1)
+                x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # HWxNxD -> NxHWxD ; B=T=1 
+                x = torch.cat((cls_token.repeat(1, 1, 1), x), dim=1)
 
-            x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1(x, b_idx), shared_rel_pos_bias=shared_rel_pos_bias, b_idx=b_idx))
+            x_res = self.drop_path(self.gamma_1 * self.attn(self.norm1(x, b_idx), shared_rel_pos_bias=shared_rel_pos_bias, b_idx=b_idx))
+            x = x + x_res
             x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x, b_idx), b_idx))          
+
+            # if self.time_attn:
+            #     B,T,N,C,H,W = vtm_shape
+            #     cls_token = x[:,0,:].unsqueeze(1)
+            #     x = x[:, 1:] # NxHWxD ; B=T=1
+            #     x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # NxHWxD -> HWxNxD ; B=T=1
+            #     x = rearrange(x, '(B T k) N d -> (B T) (k N) d',B=B,T=T,N=N) # HWxNxD -> 1xHWNxD ; B=T=1
+            #     x = rearrange(x, '(B T) (H W N) d -> (B T H W) N d',B=B,T=T,N=N,H=H,W=W) # 1xHWNxD -> HWxNxD ; B=T=1
+            #     x_res = self.drop_path(self.attn_t(self.norm0(x, b_idx), b_idx=b_idx)) # HWxNxD ; B=T=1
+            #     x_res = self.time_fc(x_res, b_idx)
+            #     # x_res = x_res * self.time_gate if x_res.shape[1] == self.time_gate.shape[1] else x_res * self.time_gate[:,0,:]
+            #     x = x + x_res
+            #     x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # HWxNxD -> NxHWxD ; B=T=1 
+            #     x = torch.cat((cls_token.repeat(1, 1, 1), x), dim=1)
 
         return x
 
@@ -462,8 +463,8 @@ class Beit(nn.Module):
                 m_str = str(m)
                 if 'Block' in m_str:
                     if i > 0:
-                      nn.init.constant_(m.temp_fc.weight, 0)
-                      nn.init.constant_(m.temp_fc.bias, 0)
+                      nn.init.constant_(m.time_fc.weight, 0)
+                      nn.init.constant_(m.time_fc.bias, 0)
                     i += 1
 
         self.feature_blocks = [level * (len(self.blocks) // n_feature_levels) - 1 for level in range(1, n_feature_levels + 1)]
@@ -515,7 +516,7 @@ class Beit(nn.Module):
             self.global_pool = global_pool
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward_features(self, x, b_idx=None, interaction_mask=None, feature_idxs=None, vtm_shape=None):
+    def forward_features(self, x, b_idx=None, interaction_mask=None, feature_idxs=None, vtm_shape=None, shared_time_embed=None):
         x = self.patch_embed(x)
         x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
         if self.pos_embed is not None:
@@ -528,16 +529,23 @@ class Beit(nn.Module):
             vtm_shape = (B,T,N,C,H,W)
             # Separate CLS token
             x = x[:, 1:]
-            x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # Nx196x768 -> 196xNx768 ; B=T=1 
+            x = rearrange(x, '(B T N) k d -> (B T k) N d',B=B,T=T,N=N) # NxHWxD -> HWxNxD ; B=T=1 
             # Interpolation, in case embedding size mismatch in the inference
             if x.shape[1] != self.time_embed.shape[1]:
                 x = x + F.interpolate(self.time_embed.transpose(1,2),
                     size=(x.shape[1]), mode='nearest').transpose(1, 2)
             else:
                 x = x + self.time_embed
+            # # SHARED EMBED
+            # if x.shape[1] != shared_time_embed.shape[1]:
+            #     x = x + F.interpolate(shared_time_embed.transpose(1,2),
+            #         size=(x.shape[1]), mode='nearest').transpose(1, 2)
+            # else:
+            #     x = x + shared_time_embed
+
             x = self.time_drop(x)
 
-            x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # 196xNx768 -> Nx196x768 ; B=T=1 
+            x = rearrange(x, '(B T k) N d -> (B T N) k d',B=B,T=T,N=N) # HWxNxD -> NxHWxD ; B=T=1 
             # Add CLS token 
             x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
 
