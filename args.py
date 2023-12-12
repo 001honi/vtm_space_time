@@ -151,6 +151,9 @@ def parse_args(shell_script=None):
 
     parser.add_argument('--img_size', '-is', type=int, default=None, choices=[224, 384, 416, 512])
 
+    parser.add_argument('--run_config', '-cfg', type=str, default=None)
+
+
     if shell_script is not None:
         args = parser.parse_args(args=shell_script.split(' '))
     else:
@@ -169,6 +172,9 @@ def parse_args(shell_script=None):
     elif args.stage == 3:
         config_path = 'configs/domain_adaptation_config.yaml'
         args.no_eval = True
+
+    if args.run_config is not None:
+        config_path = args.run_config
 
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
