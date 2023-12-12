@@ -1,81 +1,20 @@
-# Visual Token Matching
+# Visual Token Matching with Time Attention
 
-**(News) Our paper received the [Outstanding Paper Award](https://blog.iclr.cc/2023/03/21/announcing-the-iclr-2023-outstanding-paper-award-recipients/) in ICLR 2023!**
+This repository extends the base VTM by incorporating temporal attention.
 
-This repository contains official code for [Universal Few-shot Learning of Dense Prediction Tasks with Visual Token Matching](https://openreview.net/forum?id=88nT0j5jAn) (ICLR 2023 oral).
+**Follow this [link](https://github.com/GitGyun/visual_token_matching) for the base Visual Token Matching (VTM) published in ICLR 2023!**
 
-![image-VTM](https://github.com/GitGyun/visual_token_matching/blob/5c1ddd730dac9e82601e5032c973a9ee0c5bdf4b/VTM%20Overview.png)
+![image-VTM](https://github.com/001honi/vtm_space_time/blob/base/asset/vtm-time.png)
 
-## Setup
-1. Download Taskonomy Dataset (tiny split) from the official github page https://github.com/StanfordVL/taskonomy/tree/master/data.
-  * You may download data of `depth_euclidean`, `depth_zbuffer`, `edge_occlusion`, `keypoints2d`, `keypoints3d`, `normal`, `principal_curvature`, `reshading`, `segment_semantic`, and `rgb`.
-  * (Optional) Resize the images and labels into (256, 256) resolution.
-  * To reduce the I/O bottleneck of dataloader, we stored data from all buildings in a single directory. The directory structure looks like:
-  ```
-  <root>
-  |--<task1>
-  |   |--<building1>_<file_name1>
-  |   | ...
-  |   |--<building2>_<file_name1>
-  |   |...
-  |
-  |--<task2>
-  |   |--<building1>_<file_name1>
-  |   | ...
-  |   |--<building2>_<file_name1>
-  |   |...
-  |
-  |...
-  ```
+**Abstract** 
 
-2. Create `data_paths.yaml` file and write the root directory path (`<root>` in the above structure) by `taskonomy: PATH_TO_YOUR_TASKONOMY`.
+VTM is a general-purpose few-shot learner for arbitrary dense prediction tasks. However, VTM lacks the ability to process temporal information, which limits its performance in video domains. 
 
-3. Install pre-requirements by `pip install -r requirements.txt`.
+We incorporate time attention into VTM to enhance its generalizability. Empirical results demonstrate that the proposed method outperforms the baseline VTM when there are substantial translational or scaling discrepancies between the video frames and the limited support set provided, such as in 1-shot or 2-shot scenarios. The method uses time attention to simulate a coarse motion memory that guides its predictions. It also benefits from using more frames for time attention, even with significant interpolation applied after meta-training. 
 
-4. Create `model/pretrained_checkpoints` directory and download [BEiT pre-trained checkpoints](https://github.com/microsoft/unilm/tree/master/beit) to the directory.
-  * We used `beit_base_patch16_224_pt22k` checkpoint for our experiment.
+We evaluate the models on the DAVIS16 video segmentation dataset using mean-IoU scores. To ensure a fair comparison, we use the same parameters of VTM (ICLR’23) to initialize both models and train them on the MidAir video tasks dataset. However, VTM-time also computes time attention for 8 frames during the training, unlike VTM-base.
 
-## Usage
-
-### Training
-```
-python main.py --stage 0 --task_fold [0/1/2/3/4]
-```
-
-### Fine-tuning
-
-```
-python main.py --stage 1 --task [segment_semantic/normal/depth_euclidean/depth_zbuffer/edge_texture/edge_occlusion/keypoints2d/keypoints3d/reshading/principal_curvature]
-```
-
-### Evaluation
-
-```
-python main.py --stage 2 --task [segment_semantic/normal/depth_euclidean/depth_zbuffer/edge_texture/edge_occlusion/keypoints2d/keypoints3d/reshading/principal_curvature]
-```
-After the evaluation, you can print the test results by running `python print_results.py`
-
-## References
-Our code refers the following repositores:
-* [Taskonomy](https://github.com/StanfordVL/taskonomy)
-* [timm](https://github.com/huggingface/pytorch-image-models/tree/0.5.x)
-* [BEiT: BERT Pre-Training of Image Transformers](https://github.com/microsoft/unilm/tree/master/beit)
-* [Vision Transformers for Dense Prediction](https://github.com/isl-org/DPT)
-* [Inverted Pyramid Multi-task Transformer for Dense Scene Understanding](https://github.com/prismformore/Multi-Task-Transformer/tree/main/InvPT)
-* [Hypercorrelation Squeeze for Few-Shot Segmentation](https://github.com/juhongm999/hsnet)
-* [Cost Aggregation with 4D Convolutional Swin Transformer for Few-Shot Segmentation](https://github.com/Seokju-Cho/Volumetric-Aggregation-Transformer)
-
-## Citation
-If you find this work useful, please consider citing:
-```bib
-@inproceedings{kim2023universal,
-  title={Universal Few-shot Learning of Dense Prediction Tasks with Visual Token Matching},
-  author={Donggyun Kim and Jinwoo Kim and Seongwoong Cho and Chong Luo and Seunghoon Hong},
-  booktitle={International Conference on Learning Representations},
-  year={2023},
-  url={https://openreview.net/forum?id=88nT0j5jAn}
-}
-```
-
-## Acknowledgements
-The development of this open-sourced code was supported in part by the National Research Foundation of Korea (NRF) (No. 2021R1A4A3032834).
+| Model    | Shot-1         | Shot-2         | Shot-4         |
+|----------|----------------|----------------|----------------|
+| VTM-time | 0.427 (+8.89%) | 0.540 (+4.37%) | 0.626 (+0.44%) |
+| VTM-base | 0.392          | 0.517          | 0.623          |
