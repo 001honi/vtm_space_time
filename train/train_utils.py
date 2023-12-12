@@ -28,7 +28,7 @@ def configure_experiment(config, model):
     log_dir, save_dir = set_directories(config,
                                         exp_name=config.exp_name,
                                         exp_subname=(config.exp_subname if config.stage >= 1 else ''),
-                                        create_save_dir=(config.stage != 2))
+                                        create_save_dir=(config.stage not in [1,2]))
 
     # create lightning callbacks, logger, and checkpoint plugin
     if config.stage != 2:
@@ -337,39 +337,61 @@ def load_finetuned_ckpt(ckpt_path):
 
 
 def resized_load_state_dict(model, state_dict, config, verbose=True):
-    # l2b preprocessing
-    if config.learning_to_bias:
-        # delete ema and bias_selector parameters
-        if config.l2b_freeze_bias:
-            for key in list(state_dict.keys()):
-                if key.split('.')[1][:3] == 'ema' or key.split('.')[1] == 'bias_selector':
-                    del state_dict[key]
-            if config.stage == 1:
-                state_dict['model.t_idx'] = model.state_dict()['model.t_idx']
+    # # l2b preprocessing
+    # if config.learning_to_bias:
+    #     # delete ema and bias_selector parameters
+    #     if config.l2b_freeze_bias:
+    #         for key in list(state_dict.keys()):
+    #             if key.split('.')[1][:3] == 'ema' or key.split('.')[1] == 'bias_selector':
+    #                 del state_dict[key]
+    #         if config.stage == 1:
+    #             state_dict['model.t_idx'] = model.state_dict()['model.t_idx']
             
-            bias_parameters = [f'model.{name}' for name in model.model.bias_parameter_names()]
-            for key in bias_parameters:
-                state_dict[key] = state_dict[key][:config.n_bias_sets]
-        # copy ema parameters
-        else:
-            for key, value in model.state_dict().items():
-                if key.split('.')[1][:3] == 'ema':
-                    state_dict[key] = value
+    #         bias_parameters = [f'model.{name}' for name in model.model.bias_parameter_names()]
+    #         for key in bias_parameters:
+    #             state_dict[key] = state_dict[key][:config.n_bias_sets]
+    #     # copy ema parameters
+    #     else:
+    #         for key, value in model.state_dict().items():
+    #             if key.split('.')[1][:3] == 'ema':
+    #                 state_dict[key] = value
 
     # resize relative position bias table and pos embed
     for key in list(state_dict.keys()):
+        if config.pretrained_vtm and key not in model.state_dict().keys():
+            continue
+        if key.endswith('bias'): # Load pretrained vtm on taskonomy
+            if model.state_dict()[key].ndim > 1: # if model has n_bias_set (qkv bitfit)
+                if state_dict[key].ndim > 1:
+                    avg_bias = torch.mean(state_dict[key],0).repeat(model.state_dict()[key].shape[0],1)
+                else:
+                    avg_bias = state_dict[key].repeat(model.state_dict()[key].shape[0],1)
+                state_dict[key] = avg_bias
+
         if "relative_position_index" in key:
             state_dict[key] = model.state_dict()[key]
 
         if "relative_position_bias_table" in key:
-            state_dict[key] = resize_rel_pos_bias(state_dict[key], model.state_dict()[key].size(0),
+            if "attn_t" in key:
+                state_dict[key] = resize_rel_pos_bias_t(state_dict[key], model.state_dict()[key].size(0),
+                                                    verbose=verbose, verbose_tag=key)
+            else:  
+                state_dict[key] = resize_rel_pos_bias(state_dict[key], model.state_dict()[key].size(0),
                                                     verbose=verbose, verbose_tag=key)
 
         if 'pos_embed' in key:
             state_dict[key] = resize_pos_embed(state_dict[key], model.state_dict()[key].size(1),
                                                 verbose=verbose, verbose_tag=key)
+            
+        if 'time_gate' in key:
+            if state_dict[key].shape[1] != model.state_dict()[key].shape[1]:
+                state_dict[key] = F.interpolate(state_dict[key].unsqueeze(0), model.state_dict()[key].shape[-2:], mode='nearest').squeeze(0)
+        
+        # if 'time_embed' in key:  # make the interpolation in runtime inference
+        #     if state_dict[key].shape[1] != model.state_dict()[key].shape[1]: 
+        #         state_dict[key] = F.interpolate(state_dict[key].unsqueeze(0), model.state_dict()[key].shape[-2:], mode='nearest').squeeze(0)
 
-    print(model.load_state_dict(state_dict))
+    print(model.load_state_dict(state_dict,strict=False and config.pretrained_vtm))
 
 
 def select_task_specific_parameters(config, model, state_dict):
@@ -382,7 +404,7 @@ def select_task_specific_parameters(config, model, state_dict):
             elif config.task == 'derain':
                 n_tasks = 3
             elif config.task == 'semseg':
-                n_tasks = 7
+                n_tasks = 1
             elif config.task == 'animalkp':
                 n_tasks = 17
             else:
@@ -428,10 +450,18 @@ def load_model(config, verbose=True, reduced=False):
     if config.stage == 0:
         update_legacy_config(config)
         model = LightningTrainWrapper(config, verbose=verbose)
+        if config.pretrained_vtm:
+            ckpt = torch.load(f"{config.load_dir}.ckpt")
+            state_dict = ckpt['state_dict'] if 'state_dict' in ckpt else ckpt
+            resized_load_state_dict(model, state_dict, config, verbose=verbose)
+            if verbose:
+                print(f'pre-trained checkpoint loaded from {config.load_dir}')
+
+            load_path = None
+
         if config.continue_mode or config.resolution_finetune_mode:
             load_path = get_ckpt_path(config.load_dir, config.exp_name, config.load_step,
                                       save_postfix=config.save_postfix, reduced=reduced)
-
             # for resolution fine-tuning
             if config.resolution_finetune_mode:
                 state_dict, config = load_trained_ckpt(load_path, config)
@@ -450,10 +480,10 @@ def load_model(config, verbose=True, reduced=False):
         update_legacy_config(config)
         if config.stage != 3:
             config.knowledge_distill = False # no pseudo task for fine-tuning or testing
-        # image size adjustment
-        if config.img_size != 224:
-            config.image_encoder = config.image_encoder.replace('224', str(config.img_size))
-            config.label_encoder = config.label_encoder.replace('224', str(config.img_size))
+        # image size adjustment ### IMG_SIZE UPDATE
+        # if config.img_size != 224:
+        #     config.image_encoder = config.image_encoder.replace('224', str(config.img_size))
+        #     config.label_encoder = config.label_encoder.replace('224', str(config.img_size))
         model = LightningTrainWrapper(config=config, verbose=verbose)
 
         if config.stage == 3:
@@ -628,6 +658,33 @@ def resize_rel_pos_bias(rel_pos_bias, dst_num_pos, verbose=True, verbose_tag='')
         rel_pos_bias = torch.cat(all_rel_pos_bias, dim=-1)
 
         new_rel_pos_bias = torch.cat((rel_pos_bias, extra_tokens), dim=0)
+    else:
+        new_rel_pos_bias = rel_pos_bias
+
+    return new_rel_pos_bias
+
+def resize_rel_pos_bias_t(rel_pos_bias, dst_num_pos, verbose=True, verbose_tag=''):
+    src_num_pos, num_attn_heads = rel_pos_bias.size()
+    num_extra_tokens = 3
+
+    src_size = int((src_num_pos - num_extra_tokens))
+    dst_size = int((dst_num_pos - num_extra_tokens))
+    if src_size != dst_size:
+        if verbose:
+            print("Position interpolate for %s from %dx1 to %dx1" % (
+            verbose_tag, src_size, dst_size))
+        extra_tokens = rel_pos_bias[-num_extra_tokens:, :]
+        rel_pos_bias = rel_pos_bias[:-num_extra_tokens, :]
+
+        all_rel_pos_bias = torch.zeros((dst_size,num_attn_heads))
+
+        for i in range(num_attn_heads):
+            z = rel_pos_bias[:, i]
+            z = z.unsqueeze(0).unsqueeze(0)
+            z = F.interpolate(z,dst_size)
+            all_rel_pos_bias[:,i] = z.squeeze(0).squeeze(0)
+
+        new_rel_pos_bias = torch.cat((all_rel_pos_bias, extra_tokens), dim=0)
     else:
         new_rel_pos_bias = rel_pos_bias
 
