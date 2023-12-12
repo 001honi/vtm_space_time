@@ -1,11 +1,11 @@
 # environment settings
 seed: 0
 precision: fp32 #bf16
-strategy: ddp #deepspeed
+strategy: ddp
 
 # data arguments
 dataset: unified
-taskonomy: False
+taskonomy: False 
 coco: False
 midair: True
 openimages: False
@@ -19,16 +19,16 @@ cat_task: True
 coco_real: True
 midair_real: True
 
-task_fold: 0
+task_fold: 4
 num_workers: 8
-global_batch_size: 1 #28
+global_batch_size: 1 #default 6
 max_channels: 2
-shot: 2
+shot: 6
 n_buildings: -1
 domains_per_batch: 2
-eval_batch_size: 2 # EVAL BATCH GPU SIZE CHECK
+eval_batch_size: 8
 n_eval_batches: 1
-img_size: 224
+img_size: 128
 image_augmentation: False # Horizontal Flip
 unary_augmentation: True
 binary_augmentation: True
@@ -38,13 +38,13 @@ order_mixup: True
 channel_idx: -1
 
 sample_by_seq: True
-sample_skip: 8
+sample_skip: 2 #8
 
 # model arguments
 model: VTM
 image_encoder: beit_base_patch16_224_in22k
 label_encoder: vit_base_patch16_224
-time_attn: 0 #  time_attn < 2 only space attention (VTM base model) 
+time_attn: 6 #  time_attn < 2 only space attention (VTM base model) 
 decoder_features: 96
 deconv_head: False
 image_encoder_drop_path_rate: 0.1
@@ -52,8 +52,8 @@ label_encoder_drop_path_rate: 0.
 n_attn_heads: 12
 semseg_threshold: 0.2
 channel_idx: -1
-bitfit: False # !!!   BITFIT FALSE
-qkv_bitfit: False  # !!! 
+bitfit: True 
+qkv_bitfit: True  
 n_channel_interaction_blocks: 0
 channel_interaction_type: global
 post_channel_interaction: False
@@ -75,7 +75,7 @@ l2b_pre_projection: False
 additional_bias: False
 
 # training arguments
-n_steps: 300000 
+n_steps: 100000 
 n_schedule_steps: -1
 optimizer: adam
 lr: 0.0001
@@ -98,9 +98,14 @@ ema_update_after_step: 100
 ema_update_every: 10
 
 # logging arguments
-log_dir: TRAIN-SPACE
-save_dir: TRAIN-SPACE
-load_dir: TRAIN-SPACE
-val_iter: 25000
+log_dir: TRAIN/PRETASKO-224-MIDAIR-128-samp2-dbg/ts-meta2
+save_dir: TRAIN/PRETASKO-224-MIDAIR-128-samp2-dbg/ts-meta2
+load_dir: base_ckpt/TRAIN/taskonomy224_fold4
+# load_dir: base_ckpt/TRAIN/base224
+pretrained_vtm: True
+train_only_time_param: False
+train_only_label_decoder: False
+base_validation: True
+
+val_iter: 10000
 monitor: summary/mtrain_valid_pred
-load_step: -1
