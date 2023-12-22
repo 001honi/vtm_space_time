@@ -4,7 +4,7 @@ Follow this [link](https://github.com/GitGyun/visual_token_matching) for the bas
 
 This repository extends the base VTM by incorporating temporal attention. [[Presentation]](https://drive.google.com/drive/folders/1-74V1qhEGX6uUnhH52nFgUjSmgUO6VWy?usp=sharing)
 
-<img src="https://github.com/001honi/vtm_space_time/blob/base/asset/vtm-time.png" width="480">
+<img src="https://github.com/001honi/vtm_space_time/blob/base/asset/vtm-time.png" width="640">
 
 **Abstract** 
 
