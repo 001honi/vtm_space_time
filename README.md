@@ -2,7 +2,7 @@
 
 Follow this [link](https://github.com/GitGyun/visual_token_matching) for the base Visual Token Matching (VTM) published in ICLR 2023!
 
-This repository extends the base VTM by incorporating temporal attention. [[Presentation]](https://drive.google.com/drive/folders/1-74V1qhEGX6uUnhH52nFgUjSmgUO6VWy?usp=sharing)
+This repository extends the base VTM by incorporating temporal attention. [[Slides]](https://drive.google.com/drive/folders/1-74V1qhEGX6uUnhH52nFgUjSmgUO6VWy?usp=sharing)
 
 <img src="https://github.com/001honi/vtm_space_time/blob/base/asset/vtm-time.png" width="640">
 
